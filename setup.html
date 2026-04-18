@@ -13,7 +13,7 @@
     min-height: 100vh;
   }
   .container { max-width: 480px; width: 100%; }
-  .logo { color: #f7931a; font-size: 28px; font-weight: 800; margin-bottom: 4px; }
+  .logo { color: #14afac; font-size: 28px; font-weight: 800; margin-bottom: 4px; }
   .subtitle { color: #666; font-size: 14px; margin-bottom: 32px; }
 
   .card {
@@ -24,7 +24,7 @@
 
   .step { display: flex; gap: 12px; margin-bottom: 16px; align-items: flex-start; }
   .step-num {
-    background: #f7931a; color: #000; width: 24px; height: 24px;
+    background: #14afac; color: #000; width: 24px; height: 24px;
     border-radius: 50%; display: flex; align-items: center; justify-content: center;
     font-weight: 700; font-size: 13px; flex-shrink: 0; margin-top: 2px;
   }
@@ -36,7 +36,7 @@
     border: 1px solid #333; background: #1a1a1a; color: #fff;
     font-size: 15px;
   }
-  input:focus { border-color: #f7931a; outline: none; }
+  input:focus { border-color: #14afac; outline: none; }
   .hint { font-size: 12px; color: #555; margin-top: 4px; }
 
   button {
@@ -44,10 +44,10 @@
     font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 20px;
     transition: background 0.2s;
   }
-  .btn-connect { background: #222; color: #f7931a; border: 1px solid #333; }
+  .btn-connect { background: #222; color: #14afac; border: 1px solid #333; }
   .btn-connect:hover { background: #2a2a2a; }
-  .btn-send { background: #f7931a; color: #000; }
-  .btn-send:hover { background: #e8850f; }
+  .btn-send { background: #14afac; color: #000; }
+  .btn-send:hover { background: #0f8f8c; }
   .btn-send:disabled { background: #333; color: #666; cursor: not-allowed; }
 
   .status {
@@ -111,7 +111,7 @@
 
       <label>Stacked Merchant API Key</label>
       <input type="text" id="apiKey" placeholder="Your merchant API key" />
-      <p class="hint">Find this in your <a href="https://app.stackedbitcoin.com" target="_blank" style="color:#f7931a">Stacked merchant dashboard</a></p>
+      <p class="hint">Find this in your <a href="https://app.stackedbitcoin.com" target="_blank" style="color:#14afac">Stacked merchant dashboard</a></p>
 
       <button class="btn-send" id="btn-send" onclick="sendConfig()" disabled>
         Send Configuration

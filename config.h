@@ -54,12 +54,12 @@
 // --- Colours (RGB565) ---
 #define COL_BG         0x0000
 #define COL_FG         0xFFFF
-#define COL_ACCENT     0xFDA0  // Bitcoin orange
+#define COL_ACCENT     0x1575  // Stacked teal (#14afac)
 #define COL_SUCCESS    0x07E0
 #define COL_ERROR      0xF800
 #define COL_KEYPAD_BG  0x2104
 #define COL_KEYPAD_FG  0xFFFF
-#define COL_HEADER_BG  0xFDA0
+#define COL_HEADER_BG  0x1575
 #define COL_DIM        0x8410
 
 // --- QR ---

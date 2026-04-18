@@ -187,7 +187,7 @@ void DisplayUI::showSetupInfo() {
 void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
     _screen = Screen::AMOUNT_ENTRY;
     _gfx->fillScreen(COL_BG);
-    drawHeader("Enter Amount");
+    drawHeader("Stacked: Pay with Bitcoin");
 
 
 

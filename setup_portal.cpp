@@ -20,24 +20,24 @@ static const char SETUP_HTML[] PROGMEM = R"rawhtml(
          display: flex; justify-content: center; padding: 20px; }
   .card { background: #1a1a1a; border-radius: 16px; padding: 32px;
           max-width: 400px; width: 100%; }
-  h1 { color: #f7931a; font-size: 24px; margin-bottom: 4px; }
+  h1 { color: #14afac; font-size: 24px; margin-bottom: 4px; }
   .sub { color: #888; font-size: 14px; margin-bottom: 24px; }
   label { display: block; color: #ccc; font-size: 14px; margin-bottom: 6px; margin-top: 16px; }
   input, select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #333;
           background: #222; color: #fff; font-size: 16px; appearance: none; }
-  input:focus, select:focus { border-color: #f7931a; outline: none; }
+  input:focus, select:focus { border-color: #14afac; outline: none; }
   .hint { color: #666; font-size: 12px; margin-top: 4px; }
   button { width: 100%; padding: 14px; border-radius: 8px; border: none;
-           background: #f7931a; color: #000; font-size: 18px; font-weight: 700;
+           background: #14afac; color: #000; font-size: 18px; font-weight: 700;
            cursor: pointer; margin-top: 24px; }
-  button:hover { background: #e8850f; }
+  button:hover { background: #0f8f8c; }
   .row { display: flex; gap: 8px; align-items: center; }
   .row select { flex: 1; }
-  .iconbtn { width: auto; padding: 12px 14px; background: #333; color: #f7931a;
+  .iconbtn { width: auto; padding: 12px 14px; background: #333; color: #14afac;
              border-radius: 8px; border: 1px solid #444; font-size: 16px; cursor: pointer;
              margin: 0; }
   .iconbtn:hover { background: #3a3a3a; }
-  .linkbtn { background: none; color: #f7931a; border: none; padding: 6px 0;
+  .linkbtn { background: none; color: #14afac; border: none; padding: 6px 0;
              font-size: 13px; cursor: pointer; text-align: left; width: auto; margin-top: 4px; }
   .hidden { display: none; }
   .rssi { color: #888; font-size: 12px; margin-left: 4px; }
