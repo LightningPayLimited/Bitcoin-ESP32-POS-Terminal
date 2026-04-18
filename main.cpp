@@ -441,10 +441,9 @@ void loop() {
         break;
     }
 
-    // --- Paid ---
+    // --- Paid — stay until the merchant taps to dismiss ---
     case State::PAID: {
-        if (millis() - stateEnteredAt > PAID_DISPLAY_MS || ui.anyTouch())
-            resetToIdle();
+        if (ui.anyTouch()) resetToIdle();
         break;
     }
 
