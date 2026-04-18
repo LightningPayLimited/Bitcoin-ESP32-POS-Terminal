@@ -71,3 +71,10 @@
 // --- Timers ---
 #define PAID_DISPLAY_MS   5000
 #define ERROR_DISPLAY_MS  5000
+
+// --- Factory reset button ---
+// Hold this GPIO low for FACTORY_RESET_HOLD_MS to wipe NVS and reboot.
+// GPIO 35 is the default BOOT button on most ESP32-P4 dev boards.
+// If this is wrong for the JC4880P443, try 0, 22, or 36.
+#define FACTORY_RESET_PIN       35
+#define FACTORY_RESET_HOLD_MS   5000

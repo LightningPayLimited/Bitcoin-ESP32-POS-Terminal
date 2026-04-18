@@ -120,6 +120,9 @@ void setup() {
     Serial.println("=============================");
     Serial.flush();
 
+    // Factory-reset button — active-low with internal pull-up
+    pinMode(FACTORY_RESET_PIN, INPUT_PULLUP);
+
     Serial.println("[BOOT] Calling ui.begin()...");
     Serial.flush();
     ui.begin();
@@ -306,9 +309,65 @@ void setup() {
 // ================================================================
 // Loop
 // ================================================================
+// Factory-reset via long-hold of FACTORY_RESET_PIN.
+// Shows a countdown on screen while the button is held.
+static void checkFactoryResetButton() {
+    static unsigned long pressStart = 0;
+    static int lastSecsShown = -1;
+
+    bool pressed = (digitalRead(FACTORY_RESET_PIN) == LOW);
+    if (!pressed) {
+        if (pressStart != 0 && lastSecsShown >= 0) {
+            // Released before completion — redraw current screen state
+            ui.showAmountEntry("", "NZD");
+        }
+        pressStart = 0;
+        lastSecsShown = -1;
+        return;
+    }
+
+    if (pressStart == 0) pressStart = millis();
+    unsigned long held = millis() - pressStart;
+
+    if (held >= FACTORY_RESET_HOLD_MS) {
+        Serial.println("[SYS] Factory reset triggered — clearing NVS");
+        ui.gfx()->fillScreen(COL_BG);
+        ui.gfx()->setTextSize(3);
+        ui.gfx()->setTextColor(COL_ERROR, COL_BG);
+        ui.gfx()->setCursor(30, SCREEN_HEIGHT / 2 - 20);
+        ui.gfx()->print("FACTORY RESET");
+        ui.gfx()->setCursor(30, SCREEN_HEIGHT / 2 + 20);
+        ui.gfx()->setTextSize(2);
+        ui.gfx()->print("Rebooting...");
+        delay(500);
+        config.clear();
+        delay(500);
+        ESP.restart();
+    }
+
+    int secsLeft = (FACTORY_RESET_HOLD_MS - (int)held + 999) / 1000;
+    if (secsLeft != lastSecsShown) {
+        lastSecsShown = secsLeft;
+        ui.gfx()->fillScreen(COL_BG);
+        ui.gfx()->setTextColor(COL_ACCENT, COL_BG);
+        ui.gfx()->setTextSize(3);
+        ui.gfx()->setCursor(30, 100);
+        ui.gfx()->print("Factory reset in");
+        ui.gfx()->setTextSize(10);
+        ui.gfx()->setTextColor(COL_ERROR, COL_BG);
+        ui.gfx()->setCursor(SCREEN_WIDTH/2 - 40, SCREEN_HEIGHT/2);
+        ui.gfx()->printf("%d", secsLeft);
+        ui.gfx()->setTextColor(COL_DIM, COL_BG);
+        ui.gfx()->setTextSize(2);
+        ui.gfx()->setCursor(30, SCREEN_HEIGHT - 80);
+        ui.gfx()->print("Release to cancel");
+    }
+}
+
 void loop() {
     // Always check for serial commands (RESET, config JSON)
     portal.checkSerial(config);
+    checkFactoryResetButton();
 
     switch (state) {
 
