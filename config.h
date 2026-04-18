@@ -63,7 +63,9 @@
 #define COL_DIM        0x8410
 
 // --- QR ---
-#define QR_VERSION     6
+// Bolt11 Lightning invoices are ~300-600 chars alphanumeric.
+// QR version 15 at ECC L holds up to 520 alphanumeric chars.
+#define QR_VERSION     15
 #define QR_ECC_LEVEL   0
 
 // --- Timers ---

@@ -1,5 +1,6 @@
 #include "stacked_api.h"
 #include "config.h"
+#include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
@@ -13,6 +14,33 @@ void StackedAPI::begin(const String& baseUrl, const String& apiKey) {
 // ================================================================
 // Shared response parser
 // ================================================================
+
+// Parse sats from a BOLT11 invoice string.
+// Format: lnbc<amount><multiplier>1<data>  where multiplier ∈ {m, u, n, p}.
+//   no multiplier → amount is BTC  (×100_000_000 sats)
+//   m (milli)     → amount × 100_000
+//   u (micro)     → amount × 100
+//   n (nano)      → amount / 10
+//   p (pico)      → amount / 10000
+static uint64_t satsFromBolt11(const String& s) {
+    if (s.length() < 5) return 0;
+    int i = 0;
+    // Skip prefix (lnbc, lntb, lntbs, lnbcrt, etc.)
+    while (i < (int)s.length() && (s[i] < '0' || s[i] > '9')) i++;
+    uint64_t amount = 0;
+    while (i < (int)s.length() && s[i] >= '0' && s[i] <= '9') {
+        amount = amount * 10 + (s[i] - '0');
+        i++;
+    }
+    char mult = (i < (int)s.length()) ? s[i] : 0;
+    switch (mult) {
+        case 'm': return amount * 100000ULL;
+        case 'u': return amount * 100ULL;
+        case 'n': return amount / 10ULL;
+        case 'p': return amount / 10000ULL;
+        default:  return amount * 100000000ULL;
+    }
+}
 
 MerchantInvoice StackedAPI::parseInvoiceResponse(const String& resp) {
     MerchantInvoice inv = {};
@@ -36,13 +64,30 @@ MerchantInvoice StackedAPI::parseInvoiceResponse(const String& resp) {
 
     inv.paymentRequest = result["payment_request"] | "";
     inv.lnurl          = result["lnurl"] | "";
-    inv.reference      = result["reference"] | "";
-    inv.nzdAmount      = result["nzdAmount"] | 0.0f;
-    inv.satAmount      = result["satAmount"] | (uint64_t)0;
+    // Stacked's polling endpoint uses a short "TX..." reference, which
+    // appears under one of these field names. payment_hash / checking_id
+    // are wrong and produce "No such order" errors.
+    inv.reference      = result["txReference"]  | result["txRef"]
+                       | result["tx_reference"] | result["reference"]
+                       | result["orderId"]      | result["order_id"]
+                       | result["id"]           | "";
+    inv.nzdAmount      = result["nzdAmount"]    | result["nzd_amount"]
+                       | result["amount"]       | 0.0f;
+    inv.satAmount      = result["satAmount"]    | result["sat_amount"]
+                       | (uint64_t)0;
+
+    Serial.printf("[PARSE] payment_request=%s...  reference=%s\n",
+                  inv.paymentRequest.substring(0, 40).c_str(),
+                  inv.reference.c_str());
 
     if (inv.paymentRequest.isEmpty()) {
         inv.error = "Empty payment_request";
         return inv;
+    }
+
+    // If the API didn't return satAmount, derive it from the bolt11 invoice.
+    if (inv.satAmount == 0) {
+        inv.satAmount = satsFromBolt11(inv.paymentRequest);
     }
 
     inv.ok = true;
@@ -119,8 +164,13 @@ MerchantInvoice StackedAPI::refreshInvoice(const String& txRef) {
 
 PaymentStatus StackedAPI::checkPayment(const String& reference) {
     PaymentStatus ps = {};
+    if (reference.isEmpty()) {
+        ps.error = "No reference to poll";
+        return ps;
+    }
 
     String url = _base + "/api/merchant/payment?reference=" + reference;
+    Serial.printf("[POLL] reference=%s\n", reference.c_str());
     String resp = doGet(url);
 
     if (resp.isEmpty()) {
@@ -180,20 +230,27 @@ MerchantProfile StackedAPI::getProfile() {
 String StackedAPI::doGet(const String& url) {
     HTTPClient http;
     WiFiClientSecure client;
-    client.setInsecure();  // TODO: pin Stacked root CA
+    client.setInsecure();
+    client.setTimeout(20);
+    client.setHandshakeTimeout(20);
 
     if (!http.begin(client, url)) return "";
 
     http.addHeader("Accept", "application/json");
     http.addHeader("api-key", _key);
-    http.setTimeout(10000);
+    http.setTimeout(20000);
+    http.setConnectTimeout(20000);
 
+    unsigned long t0 = millis();
     int code = http.GET();
     String payload;
     if (code > 0) {
         payload = http.getString();
-        if (code != 200)
-            Serial.printf("[HTTP] GET %d %s\n", code, url.c_str());
+        Serial.printf("[HTTP] GET %dms code=%d (%d bytes): %s\n",
+                      (int)(millis() - t0), code, payload.length(),
+                      payload.length() > 300
+                          ? (payload.substring(0, 300) + "...").c_str()
+                          : payload.c_str());
     } else {
         Serial.printf("[HTTP] GET err %d %s\n", code, url.c_str());
     }
@@ -206,20 +263,42 @@ String StackedAPI::doPost(const String& url, const String& body) {
     HTTPClient http;
     WiFiClientSecure client;
     client.setInsecure();
+    client.setTimeout(20);            // 20s socket timeout
+    client.setHandshakeTimeout(20);   // 20s TLS handshake
+
+    // Quick DNS/reachability diagnostic — extract host from URL
+    int hostStart = url.indexOf("://");
+    if (hostStart > 0) hostStart += 3;
+    int hostEnd = url.indexOf('/', hostStart);
+    String host = url.substring(hostStart, hostEnd > 0 ? hostEnd : url.length());
+    IPAddress resolved;
+    if (WiFi.hostByName(host.c_str(), resolved)) {
+        Serial.printf("[HTTP] DNS %s -> %s\n", host.c_str(), resolved.toString().c_str());
+    } else {
+        Serial.printf("[HTTP] DNS FAILED for %s\n", host.c_str());
+    }
 
     if (!http.begin(client, url)) return "";
 
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Accept", "application/json");
     http.addHeader("api-key", _key);
-    http.setTimeout(10000);
+    http.setTimeout(20000);           // 20s HTTP-level timeout
+    http.setConnectTimeout(20000);
 
+    unsigned long t0 = millis();
     int code = http.POST(body);
+    Serial.printf("[HTTP] POST took %lums, code=%d\n", millis() - t0, code);
+
     String payload;
     if (code > 0) {
         payload = http.getString();
-        if (code != 200 && code != 201)
-            Serial.printf("[HTTP] POST %d %s → %s\n", code, url.c_str(), payload.c_str());
+        Serial.printf("[HTTP] RESP (%d bytes):\n", payload.length());
+        // Print in chunks so we see the whole thing (Serial buffers limit printf length)
+        for (int i = 0; i < (int)payload.length(); i += 256) {
+            Serial.print(payload.substring(i, i + 256));
+        }
+        Serial.println();
     } else {
         Serial.printf("[HTTP] POST err %d %s\n", code, url.c_str());
     }

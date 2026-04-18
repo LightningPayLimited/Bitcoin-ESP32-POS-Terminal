@@ -111,18 +111,12 @@ void DisplayUI::calibrateTouch() {
 }
 
 void DisplayUI::begin() {
-    panelPowerOn();         // backlight + touch RST release
+    panelPowerOn();
     _gfx = createDSIDisplay();
     _gfx->begin();
-
-    // --- Color test: confirms framebuffer + DSI pipe are working ---
-    _gfx->fillScreen(0xF800); _gfx->flush(true); delay(600);  // red
-    _gfx->fillScreen(0x07E0); _gfx->flush(true); delay(600);  // green
-    _gfx->fillScreen(0x001F); _gfx->flush(true); delay(600);  // blue
-
     _gfx->fillScreen(COL_BG);
     _gfx->flush(true);
-    touchBegin();           // I2C for GT911
+    touchBegin();
 }
 
 // ============================================================

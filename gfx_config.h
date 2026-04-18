@@ -61,12 +61,15 @@ inline volatile uint8_t& gt911LastStatus() { static volatile uint8_t s = 0; retu
 inline volatile int32_t& gt911LastRawX() { static volatile int32_t v = 0; return v; }
 inline volatile int32_t& gt911LastRawY() { static volatile int32_t v = 0; return v; }
 
+// Hardcoded calibration for this JC4880P443. Values extended beyond the
+// observed touch extremes so edge taps at the very bottom/right of the
+// screen still resolve inside button hit regions rather than off-grid.
 struct TouchCalib {
-    int32_t rawTLx = 0,   rawTLy = 0;
-    int32_t rawBRx = 800, rawBRy = 480;
+    int32_t rawTLx = 800, rawTLy = 490;
+    int32_t rawBRx = 340, rawBRy = -310;
     int32_t scrTLx = 0,   scrTLy = 0;
     int32_t scrBRx = SCREEN_WIDTH - 1, scrBRy = SCREEN_HEIGHT - 1;
-    bool   done = false;
+    bool   done = true;
 };
 inline TouchCalib& touchCalib() { static TouchCalib c; return c; }
 

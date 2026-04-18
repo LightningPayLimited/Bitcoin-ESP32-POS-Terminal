@@ -97,8 +97,10 @@ void handleKey(Key k) {
         enteredAmount = "";
     } else if (k == Key::CHARGE) {
         float nzd = enteredAmount.toFloat();
-        if (nzd < 0.01) return;  // Min $0.01
-        activeNzd = nzd;
+        // Compare in integer cents to avoid float-precision rejection of 0.01
+        int cents = (int)(nzd * 100.0f + 0.5f);
+        if (cents < 1) return;  // Min 1 cent
+        activeNzd = cents / 100.0f;
         state = State::CREATING_INVOICE;
         return;
     } else {
@@ -123,9 +125,6 @@ void setup() {
     ui.begin();
     Serial.println("[BOOT] ui.begin() returned OK");
     Serial.flush();
-
-    // Calibrate touch — one tap per corner
-    ui.calibrateTouch();
 
     ui.showSplash();
     delay(1000);
@@ -352,7 +351,7 @@ void loop() {
 
         ui.showQR(activeInvoice.paymentRequest,
                   activeInvoice.satAmount,
-                  activeInvoice.nzdAmount,
+                  activeInvoice.nzdAmount > 0 ? activeInvoice.nzdAmount : activeNzd,
                   INVOICE_EXPIRY_SEC,
                   refreshCount);
 
@@ -379,6 +378,18 @@ void loop() {
             Serial.printf("[POS] Refreshing invoice (%d)...\n", refreshCount + 1);
             MerchantInvoice refreshed = api.refreshInvoice(activeInvoice.reference);
 
+            // If refresh fails (e.g. old invoice expired server-side), fall
+            // back to creating a brand-new invoice at the same NZD amount
+            // so the customer isn't stranded with a dead QR.
+            if (!refreshed.ok) {
+                Serial.printf("[POS] Refresh failed (%s) — creating new invoice\n",
+                              refreshed.error.c_str());
+                String details = merchantName.length() > 0
+                    ? merchantName + " $" + String(activeNzd, 2) + " NZD"
+                    : "$" + String(activeNzd, 2) + " NZD";
+                refreshed = api.createInvoice(activeNzd, details);
+            }
+
             if (refreshed.ok) {
                 activeInvoice = refreshed;
                 invoiceCreatedAt = millis();
@@ -387,9 +398,15 @@ void loop() {
 
                 ui.showQR(activeInvoice.paymentRequest,
                           activeInvoice.satAmount,
-                          activeInvoice.nzdAmount,
+                          activeInvoice.nzdAmount > 0 ? activeInvoice.nzdAmount : activeNzd,
                           INVOICE_EXPIRY_SEC,
                           refreshCount);
+            } else {
+                Serial.printf("[POS] Invoice creation failed too: %s\n",
+                              refreshed.error.c_str());
+                state = State::ERROR;
+                stateEnteredAt = millis();
+                ui.showError("Cannot create invoice");
             }
             break;
         }
