@@ -34,6 +34,82 @@ static Key keyMap(int r, int c) {
 // ============================================================
 // begin()
 // ============================================================
+static bool waitRawTap(int32_t* outRawX, int32_t* outRawY, uint32_t timeoutMs) {
+    uint16_t tx, ty;
+    uint32_t start = millis();
+    while (millis() - start < timeoutMs) {
+        if (gt911ReadTouch(&tx, &ty)) {
+            *outRawX = gt911LastRawX();
+            *outRawY = gt911LastRawY();
+            // Wait for release (up to 2s)
+            uint32_t rstart = millis();
+            while (gt911ReadTouch(&tx, &ty) && millis() - rstart < 2000) {
+                delay(15);
+            }
+            return true;
+        }
+        delay(10);
+    }
+    return false;
+}
+
+void DisplayUI::calibrateTouch() {
+    const int inset = 60;
+    const int targets[2][2] = {
+        { inset,             inset               },
+        { SCREEN_WIDTH-inset, SCREEN_HEIGHT-inset }
+    };
+    const char* labels[2] = { "TAP TOP-LEFT CROSS", "TAP BOTTOM-RIGHT CROSS" };
+    int32_t raw[2][2];
+
+    for (int step = 0; step < 2; step++) {
+        while (true) {
+            _gfx->fillScreen(COL_BG);
+            drawCenteredText("TOUCH CALIBRATION", SCREEN_WIDTH/2, 120,
+                             3, COL_ACCENT, COL_BG);
+            drawCenteredText(labels[step], SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 40,
+                             2, COL_FG, COL_BG);
+            drawCenteredText("(tap the orange target)",
+                             SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 20,
+                             1, COL_DIM, COL_BG);
+
+            int cx = targets[step][0], cy = targets[step][1];
+            _gfx->drawLine(cx - 40, cy, cx + 40, cy, COL_ACCENT);
+            _gfx->drawLine(cx, cy - 40, cx, cy + 40, COL_ACCENT);
+            _gfx->drawCircle(cx, cy, 30, COL_ACCENT);
+            _gfx->drawCircle(cx, cy, 15, COL_ACCENT);
+            _gfx->fillCircle(cx, cy, 5, COL_ACCENT);
+
+            if (waitRawTap(&raw[step][0], &raw[step][1], 30000)) {
+                Serial.printf("[CAL] target %d (scr=%d,%d): raw=%ld,%ld\n",
+                              step, targets[step][0], targets[step][1],
+                              (long)raw[step][0], (long)raw[step][1]);
+                _gfx->fillCircle(cx, cy, 22, 0x07E0);
+                delay(400);
+                break;
+            } else {
+                _gfx->fillScreen(COL_BG);
+                drawCenteredText("NO TAP DETECTED", SCREEN_WIDTH/2,
+                                 SCREEN_HEIGHT/2, 3, COL_ERROR, COL_BG);
+                drawCenteredText("retrying...", SCREEN_WIDTH/2,
+                                 SCREEN_HEIGHT/2 + 50, 2, COL_DIM, COL_BG);
+                delay(1500);
+                // loop back and try again
+            }
+        }
+    }
+
+    auto& c = touchCalib();
+    c.rawTLx = raw[0][0]; c.rawTLy = raw[0][1];
+    c.rawBRx = raw[1][0]; c.rawBRy = raw[1][1];
+    c.scrTLx = targets[0][0]; c.scrTLy = targets[0][1];
+    c.scrBRx = targets[1][0]; c.scrBRy = targets[1][1];
+    c.done = true;
+    Serial.printf("[CAL] done TL=(%ld,%ld)->(%ld,%ld) BR=(%ld,%ld)->(%ld,%ld)\n",
+                  (long)c.rawTLx, (long)c.rawTLy, (long)c.scrTLx, (long)c.scrTLy,
+                  (long)c.rawBRx, (long)c.rawBRy, (long)c.scrBRx, (long)c.scrBRy);
+}
+
 void DisplayUI::begin() {
     panelPowerOn();         // backlight + touch RST release
     _gfx = createDSIDisplay();
@@ -118,6 +194,7 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
     _screen = Screen::AMOUNT_ENTRY;
     _gfx->fillScreen(COL_BG);
     drawHeader("Enter Amount");
+
 
 
     // Amount box
@@ -284,7 +361,13 @@ Key DisplayUI::pollTouch() {
     if (touched && !_wasTouched && (millis() - _lastTouch > 200)) {
         _wasTouched = true;
         _lastTouch = millis();
-        if (_screen == Screen::AMOUNT_ENTRY) return hitTest(tx, ty);
+        Serial.printf("[TOUCH] raw=%ld,%ld  scr=%u,%u\n",
+                      (long)gt911LastRawX(), (long)gt911LastRawY(), tx, ty);
+        if (_screen == Screen::AMOUNT_ENTRY) {
+            Key k = hitTest(tx, ty);
+            Serial.printf("[TOUCH] hit -> key=%d\n", (int)k);
+            return k;
+        }
     }
     if (!touched) _wasTouched = false;
     return Key::NONE;

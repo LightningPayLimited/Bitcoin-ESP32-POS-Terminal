@@ -124,6 +124,9 @@ void setup() {
     Serial.println("[BOOT] ui.begin() returned OK");
     Serial.flush();
 
+    // Calibrate touch — one tap per corner
+    ui.calibrateTouch();
+
     ui.showSplash();
     delay(1000);
 
@@ -319,12 +322,20 @@ void loop() {
 
     // --- Create invoice ---
     case State::CREATING_INVOICE: {
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("[POS] PAY pressed but WiFi not connected — aborting");
+            state = State::ERROR;
+            stateEnteredAt = millis();
+            ui.showError("No WiFi connection");
+            break;
+        }
         ui.showLoading("Creating invoice...");
 
         String details = merchantName.length() > 0
             ? merchantName + " $" + String(activeNzd, 2) + " NZD"
             : "$" + String(activeNzd, 2) + " NZD";
 
+        Serial.printf("[POS] Creating invoice $%.2f NZD\n", activeNzd);
         activeInvoice = api.createInvoice(activeNzd, details);
 
         if (!activeInvoice.ok) {

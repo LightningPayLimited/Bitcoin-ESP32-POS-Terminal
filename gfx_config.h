@@ -58,26 +58,50 @@ inline void touchBegin() {
 
 // Compatibility shims so existing UI code that references these still links.
 inline volatile uint8_t& gt911LastStatus() { static volatile uint8_t s = 0; return s; }
-inline volatile uint16_t& gt911LastRawX() { static volatile uint16_t v = 0; return v; }
-inline volatile uint16_t& gt911LastRawY() { static volatile uint16_t v = 0; return v; }
+inline volatile int32_t& gt911LastRawX() { static volatile int32_t v = 0; return v; }
+inline volatile int32_t& gt911LastRawY() { static volatile int32_t v = 0; return v; }
+
+struct TouchCalib {
+    int32_t rawTLx = 0,   rawTLy = 0;
+    int32_t rawBRx = 800, rawBRy = 480;
+    int32_t scrTLx = 0,   scrTLy = 0;
+    int32_t scrBRx = SCREEN_WIDTH - 1, scrBRy = SCREEN_HEIGHT - 1;
+    bool   done = false;
+};
+inline TouchCalib& touchCalib() { static TouchCalib c; return c; }
 
 inline bool gt911ReadTouch(uint16_t* outX, uint16_t* outY) {
     auto& ts = touch();
     ts.read();
     if (!ts.isTouched || ts.touches == 0) return false;
 
-    // The library reports coords in the chip's native orientation we
-    // configured (800 wide × 480 tall landscape). Rotate to portrait:
-    //   portrait_x = raw_y
-    //   portrait_y = max_x - raw_x  (mirror to keep origin top-left)
-    uint16_t rawX = ts.points[0].x;
-    uint16_t rawY = ts.points[0].y;
+    // Chip reports signed int16 but the library stores them as uint16.
+    // Cast to int16_t so bottom-half Y values (which go negative) decode.
+    // NO swap — chip's axes already align with portrait screen.
+    int32_t rawX = (int16_t)ts.points[0].x;
+    int32_t rawY = (int16_t)ts.points[0].y;
+
     gt911LastRawX() = rawX;
     gt911LastRawY() = rawY;
     gt911LastStatus() = 0x81;
 
-    int32_t sx = rawY;
-    int32_t sy = (int32_t)SCREEN_HEIGHT - 1 - rawX;
+    auto& c = touchCalib();
+    if (!c.done) {
+        *outX = rawX < 0 ? 0 : (rawX > 65535 ? 65535 : (uint16_t)rawX);
+        *outY = rawY < 0 ? 0 : (rawY > 65535 ? 65535 : (uint16_t)rawY);
+        return true;
+    }
+
+    int32_t dxRaw = c.rawBRx - c.rawTLx;
+    int32_t dyRaw = c.rawBRy - c.rawTLy;
+    int32_t dxScr = c.scrBRx - c.scrTLx;
+    int32_t dyScr = c.scrBRy - c.scrTLy;
+    if (dxRaw == 0) dxRaw = 1;
+    if (dyRaw == 0) dyRaw = 1;
+
+    int32_t sx = c.scrTLx + (rawX - c.rawTLx) * dxScr / dxRaw;
+    int32_t sy = c.scrTLy + (rawY - c.rawTLy) * dyScr / dyRaw;
+
     if (sx < 0) sx = 0; if (sx >= SCREEN_WIDTH)  sx = SCREEN_WIDTH - 1;
     if (sy < 0) sy = 0; if (sy >= SCREEN_HEIGHT) sy = SCREEN_HEIGHT - 1;
     *outX = (uint16_t)sx;

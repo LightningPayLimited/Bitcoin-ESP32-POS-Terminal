@@ -16,6 +16,9 @@ class DisplayUI {
 public:
     void begin();
 
+    /// Run 2-point calibration. Blocks; times out after 10s per target.
+    void calibrateTouch();
+
     void showSplash(const String& merchantName = "");
     void showSetupInfo();
     void showAmountEntry(const String& amount, const String& currency);
