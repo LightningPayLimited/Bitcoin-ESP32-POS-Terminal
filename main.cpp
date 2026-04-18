@@ -1,0 +1,399 @@
+// ============================================================
+// Stacked POS — ESP32-P4 Lightning Bitcoin Point of Sale
+// ============================================================
+//
+// Boot flow:
+//   1. Check NVS for saved config (WiFi + API key)
+//   2. If not provisioned → start captive portal for setup
+//   3. If provisioned → connect WiFi → enter POS mode
+//
+// POS flow:
+//   1. Numpad → merchant enters $NZD amount
+//   2. PAY → POST /api/merchant/payment with NZD amount
+//   3. Show QR (bolt11) → poll status every 1.5s
+//   4. Invoice expires in 60s → auto-refresh via txRef
+//   5. paidDate set → success screen → back to numpad
+//
+// Provisioning:
+//   - First boot: captive portal at 192.168.4.1
+//   - Or: send JSON over serial: {"ssid":"...","pass":"...","apiKey":"..."}
+//   - Or: Stacked webpage pushes config via Web Serial API
+//   - Send "RESET" over serial to factory reset
+//
+// ============================================================
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include "config.h"
+#include "config_store.h"
+#include "setup_portal.h"
+#include "display_ui.h"
+#include "stacked_api.h"
+
+// ================================================================
+// State
+// ================================================================
+enum class State {
+    BOOT,
+    SETUP,             // Captive portal running
+    WIFI_CONNECTING,
+    IDLE,              // Numpad
+    CREATING_INVOICE,
+    AWAITING_PAYMENT,
+    PAID,
+    ERROR,
+};
+
+static State        state = State::BOOT;
+static ConfigStore  config;
+static SetupPortal  portal;
+static DisplayUI    ui;
+static StackedAPI   api;
+
+static String merchantName = "";
+static String enteredAmount = "";
+static float  activeNzd = 0;
+
+static MerchantInvoice activeInvoice;
+static unsigned long   invoiceCreatedAt = 0;
+static unsigned long   lastPollAt = 0;
+static int             refreshCount = 0;
+static unsigned long   stateEnteredAt = 0;
+
+// ================================================================
+// Helpers
+// ================================================================
+static char keyChar(Key k) {
+    const char map[] = "0123456789";
+    int idx = (int)k - (int)Key::D0;
+    return (idx >= 0 && idx <= 9) ? map[idx] : 0;
+}
+
+void resetToIdle() {
+    state = State::IDLE;
+    enteredAmount = "";
+    activeNzd = 0;
+    refreshCount = 0;
+    activeInvoice = {};
+    ui.showAmountEntry(enteredAmount, "NZD");
+}
+
+void handleKey(Key k) {
+    char ch = keyChar(k);
+    if (ch) {
+        int dot = enteredAmount.indexOf('.');
+        if (dot >= 0 && (int)enteredAmount.length() - dot > 2) return;
+        if (enteredAmount.length() >= 10) return;
+        enteredAmount += ch;
+    } else if (k == Key::DOT) {
+        if (enteredAmount.indexOf('.') < 0) {
+            if (enteredAmount.isEmpty()) enteredAmount = "0";
+            enteredAmount += ".";
+        }
+    } else if (k == Key::DEL) {
+        if (enteredAmount.length() > 0)
+            enteredAmount.remove(enteredAmount.length() - 1);
+    } else if (k == Key::CLEAR) {
+        enteredAmount = "";
+    } else if (k == Key::CHARGE) {
+        float nzd = enteredAmount.toFloat();
+        if (nzd < 0.01) return;  // Min $0.01
+        activeNzd = nzd;
+        state = State::CREATING_INVOICE;
+        return;
+    } else {
+        return;
+    }
+    ui.showAmountEntry(enteredAmount, "NZD");
+}
+
+// ================================================================
+// Setup
+// ================================================================
+void setup() {
+    Serial.begin(115200);
+    delay(2000);  // give USB-CDC host time to (re)connect
+    Serial.println("\n=============================");
+    Serial.println("  Stacked POS — ESP32-P4");
+    Serial.println("=============================");
+    Serial.flush();
+
+    Serial.println("[BOOT] Calling ui.begin()...");
+    Serial.flush();
+    ui.begin();
+    Serial.println("[BOOT] ui.begin() returned OK");
+    Serial.flush();
+
+    // Touch calibration — once per boot for now
+    ui.calibrateTouch();
+
+    ui.showSplash();
+    delay(1000);
+
+    // Load config from NVS
+    bool provisioned = config.begin();
+
+    if (!provisioned) {
+        // --- SETUP MODE ---
+        Serial.println("[BOOT] Not provisioned — entering setup mode");
+        state = State::SETUP;
+        ui.showSetupInfo();
+
+        // This blocks until config is saved, then reboots
+        portal.runCaptivePortal(config);
+        return;  // Won't reach here — device reboots
+    }
+
+    // --- POS MODE ---
+    Serial.println("[BOOT] Config loaded — connecting WiFi...");
+    Serial.printf("[WIFI] SSID='%s' pass.len=%d\n",
+                  config.ssid().c_str(), config.pass().length());
+    Serial.printf("[WIFI] MAC=%s\n", WiFi.macAddress().c_str());
+    ui.showLoading("Connecting WiFi...");
+
+    // Install verbose event logging
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+        switch (event) {
+            case ARDUINO_EVENT_WIFI_STA_START:
+                Serial.println("[WIFI EV] STA started");
+                break;
+            case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+                Serial.printf("[WIFI EV] Associated to AP (ch=%u, auth=%u)\n",
+                              info.wifi_sta_connected.channel,
+                              info.wifi_sta_connected.authmode);
+                break;
+            case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+                Serial.printf("[WIFI EV] Got IP: %s  GW: %s  DNS: %s\n",
+                              IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str(),
+                              IPAddress(info.got_ip.ip_info.gw.addr).toString().c_str(),
+                              WiFi.dnsIP().toString().c_str());
+                break;
+            case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
+                const char* r;
+                switch (info.wifi_sta_disconnected.reason) {
+                    case WIFI_REASON_AUTH_EXPIRE:       r = "AUTH_EXPIRE"; break;
+                    case WIFI_REASON_AUTH_FAIL:         r = "AUTH_FAIL (wrong password?)"; break;
+                    case WIFI_REASON_NO_AP_FOUND:       r = "NO_AP_FOUND (SSID not visible)"; break;
+                    case WIFI_REASON_ASSOC_FAIL:        r = "ASSOC_FAIL"; break;
+                    case WIFI_REASON_HANDSHAKE_TIMEOUT: r = "HANDSHAKE_TIMEOUT (wrong password?)"; break;
+                    case WIFI_REASON_BEACON_TIMEOUT:    r = "BEACON_TIMEOUT (signal too weak?)"; break;
+                    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: r = "4WAY_HANDSHAKE_TIMEOUT"; break;
+                    default:                            r = "other"; break;
+                }
+                Serial.printf("[WIFI EV] Disconnected — reason %u (%s)\n",
+                              info.wifi_sta_disconnected.reason, r);
+                break;
+            }
+            default: break;
+        }
+    });
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(config.ssid().c_str(), config.pass().c_str());
+
+    int tries = 0;
+    wl_status_t last = WiFi.status();
+    while (last != WL_CONNECTED && tries < 40) {
+        delay(500);
+        wl_status_t now = WiFi.status();
+        if (now != last) {
+            const char* s;
+            switch (now) {
+                case WL_IDLE_STATUS:     s = "IDLE"; break;
+                case WL_NO_SSID_AVAIL:   s = "NO_SSID_AVAIL"; break;
+                case WL_SCAN_COMPLETED:  s = "SCAN_COMPLETED"; break;
+                case WL_CONNECTED:       s = "CONNECTED"; break;
+                case WL_CONNECT_FAILED:  s = "CONNECT_FAILED"; break;
+                case WL_CONNECTION_LOST: s = "CONNECTION_LOST"; break;
+                case WL_DISCONNECTED:    s = "DISCONNECTED"; break;
+                default:                 s = "?"; break;
+            }
+            Serial.printf("\n[WIFI] status -> %d (%s)\n", now, s);
+            last = now;
+        } else {
+            Serial.print(".");
+        }
+        portal.checkSerial(config);
+        tries++;
+    }
+    Serial.println();
+
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.printf("[WIFI] Final status: %d, RSSI: %d dBm\n",
+                      WiFi.status(), WiFi.RSSI());
+
+        // Scan and log what's actually visible
+        Serial.println("[WIFI] Scanning for diagnosis...");
+        int n = WiFi.scanNetworks(false, true);
+        Serial.printf("[WIFI] Visible networks: %d\n", n);
+        for (int i = 0; i < n; i++) {
+            Serial.printf("  %2d) %-32s rssi=%d ch=%d auth=%d%s\n",
+                          i, WiFi.SSID(i).c_str(), WiFi.RSSI(i),
+                          WiFi.channel(i), (int)WiFi.encryptionType(i),
+                          WiFi.SSID(i) == config.ssid() ? "  <-- target" : "");
+        }
+        WiFi.scanDelete();
+
+        Serial.println("[BOOT] WiFi failed — dropping back into setup mode");
+        ui.showError("WiFi failed. Reconfiguring...");
+        delay(2500);
+
+        // Keep saved creds around so the user can see what was wrong and just
+        // fix the password, but flip the provisioned flag so the portal stays
+        // up until the user saves again.
+        config.markUnprovisioned();
+
+        ui.showSetupInfo();
+        portal.runCaptivePortal(config);
+        return;  // runCaptivePortal reboots on save
+    }
+
+    Serial.printf("[BOOT] WiFi OK: %s\n", WiFi.localIP().toString().c_str());
+
+    // Init API
+    api.begin(STACKED_API_BASE, config.apiKey());
+
+    // Fetch merchant profile
+    ui.showLoading("Loading merchant...");
+    MerchantProfile profile = api.getProfile();
+    if (profile.ok) {
+        merchantName = profile.companyName;
+        Serial.printf("[BOOT] Merchant: %s\n", merchantName.c_str());
+    }
+
+    // Brief splash with merchant name
+    ui.showSplash(merchantName);
+    delay(1500);
+
+    // Ready
+    resetToIdle();
+    Serial.println("[POS] Ready — enter NZD amount");
+}
+
+// ================================================================
+// Loop
+// ================================================================
+void loop() {
+    // Always check for serial commands (RESET, config JSON)
+    portal.checkSerial(config);
+
+    switch (state) {
+
+    // --- Numpad ---
+    case State::IDLE: {
+        Key k = ui.pollTouch();
+        if (k != Key::NONE) handleKey(k);
+        break;
+    }
+
+    // --- Create invoice ---
+    case State::CREATING_INVOICE: {
+        ui.showLoading("Creating invoice...");
+
+        String details = merchantName.length() > 0
+            ? merchantName + " $" + String(activeNzd, 2) + " NZD"
+            : "$" + String(activeNzd, 2) + " NZD";
+
+        activeInvoice = api.createInvoice(activeNzd, details);
+
+        if (!activeInvoice.ok) {
+            state = State::ERROR;
+            stateEnteredAt = millis();
+            ui.showError(activeInvoice.error);
+            break;
+        }
+
+        invoiceCreatedAt = millis();
+        lastPollAt = 0;
+        refreshCount = 0;
+        state = State::AWAITING_PAYMENT;
+
+        ui.showQR(activeInvoice.paymentRequest,
+                  activeInvoice.satAmount,
+                  activeInvoice.nzdAmount,
+                  INVOICE_EXPIRY_SEC,
+                  refreshCount);
+
+        Serial.printf("[POS] Invoice: $%.2f NZD = %lu sats\n",
+                      activeInvoice.nzdAmount, (unsigned long)activeInvoice.satAmount);
+        break;
+    }
+
+    // --- Awaiting payment: poll + auto-refresh ---
+    case State::AWAITING_PAYMENT: {
+        unsigned long now = millis();
+        unsigned long elapsed = now - invoiceCreatedAt;
+        int secsLeft = INVOICE_EXPIRY_SEC - (int)(elapsed / 1000);
+
+        // Auto-refresh before expiry
+        if (elapsed >= (unsigned long)(INVOICE_EXPIRY_SEC * 1000 - INVOICE_REFRESH_BUFFER_MS)) {
+            if (refreshCount >= MAX_INVOICE_REFRESHES) {
+                state = State::ERROR;
+                stateEnteredAt = millis();
+                ui.showError("Payment timeout");
+                break;
+            }
+
+            Serial.printf("[POS] Refreshing invoice (%d)...\n", refreshCount + 1);
+            MerchantInvoice refreshed = api.refreshInvoice(activeInvoice.reference);
+
+            if (refreshed.ok) {
+                activeInvoice = refreshed;
+                invoiceCreatedAt = millis();
+                refreshCount++;
+                lastPollAt = 0;
+
+                ui.showQR(activeInvoice.paymentRequest,
+                          activeInvoice.satAmount,
+                          activeInvoice.nzdAmount,
+                          INVOICE_EXPIRY_SEC,
+                          refreshCount);
+            }
+            break;
+        }
+
+        // Poll payment status
+        if (now - lastPollAt >= PAYMENT_POLL_INTERVAL_MS) {
+            lastPollAt = now;
+            PaymentStatus ps = api.checkPayment(activeInvoice.reference);
+
+            if (ps.ok && ps.isPaid) {
+                state = State::PAID;
+                stateEnteredAt = millis();
+                ui.showPaid(ps.satAmount, ps.nzdAmount);
+                Serial.printf("[POS] PAID! $%.2f NZD (%lu sats)\n",
+                              ps.nzdAmount, (unsigned long)ps.satAmount);
+                break;
+            }
+        }
+
+        // Update countdown
+        if (secsLeft >= 0) ui.updateTimer(secsLeft, refreshCount);
+
+        // Cancel on touch
+        if (ui.anyTouch()) {
+            Serial.println("[POS] Cancelled");
+            resetToIdle();
+        }
+        break;
+    }
+
+    // --- Paid ---
+    case State::PAID: {
+        if (millis() - stateEnteredAt > PAID_DISPLAY_MS || ui.anyTouch())
+            resetToIdle();
+        break;
+    }
+
+    // --- Error ---
+    case State::ERROR: {
+        if (millis() - stateEnteredAt > ERROR_DISPLAY_MS || ui.anyTouch())
+            resetToIdle();
+        break;
+    }
+
+    default: break;
+    }
+
+    delay(50);
+}

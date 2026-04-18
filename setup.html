@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stacked POS Setup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0a0a0a; color: #e0e0e0;
+    display: flex; justify-content: center; padding: 40px 20px;
+    min-height: 100vh;
+  }
+  .container { max-width: 480px; width: 100%; }
+  .logo { color: #f7931a; font-size: 28px; font-weight: 800; margin-bottom: 4px; }
+  .subtitle { color: #666; font-size: 14px; margin-bottom: 32px; }
+
+  .card {
+    background: #141414; border: 1px solid #222; border-radius: 12px;
+    padding: 28px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 18px; margin-bottom: 16px; color: #fff; }
+
+  .step { display: flex; gap: 12px; margin-bottom: 16px; align-items: flex-start; }
+  .step-num {
+    background: #f7931a; color: #000; width: 24px; height: 24px;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px; flex-shrink: 0; margin-top: 2px;
+  }
+  .step-text { font-size: 14px; color: #aaa; line-height: 1.5; }
+
+  label { display: block; font-size: 13px; color: #888; margin-bottom: 6px; margin-top: 16px; }
+  input {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid #333; background: #1a1a1a; color: #fff;
+    font-size: 15px;
+  }
+  input:focus { border-color: #f7931a; outline: none; }
+  .hint { font-size: 12px; color: #555; margin-top: 4px; }
+
+  button {
+    width: 100%; padding: 14px; border-radius: 8px; border: none;
+    font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 20px;
+    transition: background 0.2s;
+  }
+  .btn-connect { background: #222; color: #f7931a; border: 1px solid #333; }
+  .btn-connect:hover { background: #2a2a2a; }
+  .btn-send { background: #f7931a; color: #000; }
+  .btn-send:hover { background: #e8850f; }
+  .btn-send:disabled { background: #333; color: #666; cursor: not-allowed; }
+
+  .status {
+    padding: 12px; border-radius: 8px; font-size: 13px;
+    margin-top: 12px; display: none;
+  }
+  .status.ok { display: block; background: #0a2e0a; border: 1px solid #1a5c1a; color: #4caf50; }
+  .status.err { display: block; background: #2e0a0a; border: 1px solid #5c1a1a; color: #f44336; }
+  .status.info { display: block; background: #1a1a0a; border: 1px solid #5c5c1a; color: #ff9800; }
+
+  .serial-log {
+    background: #0a0a0a; border: 1px solid #222; border-radius: 8px;
+    padding: 12px; font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px; color: #666; max-height: 200px; overflow-y: auto;
+    margin-top: 12px; white-space: pre-wrap; display: none;
+  }
+
+  .not-supported {
+    text-align: center; padding: 40px; color: #f44336;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="logo">⚡ Stacked POS Setup</div>
+  <p class="subtitle">Configure your Bitcoin point of sale terminal</p>
+
+  <!-- Check Web Serial support -->
+  <div id="not-supported" class="card not-supported" style="display:none">
+    <h2>Browser Not Supported</h2>
+    <p>Web Serial requires Chrome, Edge, or Opera on desktop.</p>
+  </div>
+
+  <div id="main-content">
+    <!-- Step 1: Connect -->
+    <div class="card">
+      <h2>1. Connect your POS terminal</h2>
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">Plug the ESP32-P4 board into your computer via USB-C</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">Click "Connect" and select the serial port</div>
+      </div>
+      <button class="btn-connect" id="btn-connect" onclick="connectSerial()">
+        Connect to POS Terminal
+      </button>
+      <div id="connect-status" class="status"></div>
+    </div>
+
+    <!-- Step 2: Configure -->
+    <div class="card">
+      <h2>2. Enter your details</h2>
+
+      <label>WiFi Network Name</label>
+      <input type="text" id="ssid" placeholder="Your WiFi SSID" />
+
+      <label>WiFi Password</label>
+      <input type="password" id="pass" placeholder="WiFi password (leave blank if open)" />
+
+      <label>Stacked Merchant API Key</label>
+      <input type="text" id="apiKey" placeholder="Your merchant API key" />
+      <p class="hint">Find this in your <a href="https://app.stackedbitcoin.com" target="_blank" style="color:#f7931a">Stacked merchant dashboard</a></p>
+
+      <button class="btn-send" id="btn-send" onclick="sendConfig()" disabled>
+        Send Configuration
+      </button>
+      <div id="send-status" class="status"></div>
+    </div>
+
+    <!-- Serial log -->
+    <div class="card">
+      <h2>Serial Log</h2>
+      <div id="serial-log" class="serial-log" style="display:block">Waiting for connection...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let port = null;
+let reader = null;
+let writer = null;
+
+// Check browser support
+if (!('serial' in navigator)) {
+  document.getElementById('not-supported').style.display = 'block';
+  document.getElementById('main-content').style.display = 'none';
+}
+
+function setStatus(id, type, msg) {
+  const el = document.getElementById(id);
+  el.className = 'status ' + type;
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function log(msg) {
+  const el = document.getElementById('serial-log');
+  el.textContent += msg;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function connectSerial() {
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+
+    writer = port.writable.getWriter();
+    setStatus('connect-status', 'ok', 'Connected! You can now send configuration.');
+    document.getElementById('btn-connect').textContent = 'Connected ✓';
+    document.getElementById('btn-connect').disabled = true;
+    document.getElementById('btn-send').disabled = false;
+
+    // Start reading serial output
+    const textDecoder = new TextDecoderStream();
+    const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+    reader = textDecoder.readable.getReader();
+
+    readLoop();
+  } catch (err) {
+    setStatus('connect-status', 'err', 'Connection failed: ' + err.message);
+  }
+}
+
+async function readLoop() {
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) log(value);
+
+      // Detect successful save
+      if (value && value.includes('Config saved')) {
+        setStatus('send-status', 'ok',
+          'Configuration saved! The POS terminal will now restart and connect to your WiFi.');
+      }
+    }
+  } catch (err) {
+    log('\n[Disconnected]\n');
+  }
+}
+
+async function sendConfig() {
+  const ssid = document.getElementById('ssid').value.trim();
+  const pass = document.getElementById('pass').value;
+  const apiKey = document.getElementById('apiKey').value.trim();
+
+  if (!ssid) { setStatus('send-status', 'err', 'WiFi SSID is required'); return; }
+  if (!apiKey) { setStatus('send-status', 'err', 'API key is required'); return; }
+
+  const config = JSON.stringify({ ssid, pass, apiKey });
+
+  try {
+    setStatus('send-status', 'info', 'Sending configuration...');
+    const encoder = new TextEncoder();
+    await writer.write(encoder.encode(config + '\n'));
+    log('\n[Sent config: ' + ssid + ']\n');
+
+    // Status will update when we see "Config saved" in serial output
+    setTimeout(() => {
+      // If no response after 3s, still show a hint
+      const el = document.getElementById('send-status');
+      if (el.className.includes('info')) {
+        setStatus('send-status', 'ok',
+          'Config sent! If the terminal doesn\'t restart, try pressing the RST button.');
+      }
+    }, 3000);
+  } catch (err) {
+    setStatus('send-status', 'err', 'Send failed: ' + err.message);
+  }
+}
+</script>
+</body>
+</html>

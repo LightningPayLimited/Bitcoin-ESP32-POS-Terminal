@@ -1,0 +1,413 @@
+#include "display_ui.h"
+#include "config.h"
+#include <qrcode.h>
+
+// ============================================================
+// Layout constants — 480x800 portrait
+// ============================================================
+#define HDR_H      50
+#define AMT_BOX_Y  70
+#define AMT_BOX_H  90
+#define KP_X0      15
+#define KP_Y0      190
+#define KP_COLS    4
+#define KP_ROWS    4
+#define KP_BW      110
+#define KP_BH      130
+#define KP_GAP     7
+
+static const char* KP[KP_ROWS][KP_COLS] = {
+    {"1", "2", "3", "<"},
+    {"4", "5", "6", "C"},
+    {"7", "8", "9", "."},
+    {"",  "0", "",  "$"},
+};
+
+static Key keyMap(int r, int c) {
+    if (r==0) { if(c==0) return Key::D1; if(c==1) return Key::D2; if(c==2) return Key::D3; if(c==3) return Key::DEL; }
+    if (r==1) { if(c==0) return Key::D4; if(c==1) return Key::D5; if(c==2) return Key::D6; if(c==3) return Key::CLEAR; }
+    if (r==2) { if(c==0) return Key::D7; if(c==1) return Key::D8; if(c==2) return Key::D9; if(c==3) return Key::DOT; }
+    if (r==3) { if(c==1) return Key::D0; if(c==3) return Key::CHARGE; }
+    return Key::NONE;
+}
+
+// ============================================================
+// begin()
+// ============================================================
+// Internal helper: wait for one tap, return raw chip coords
+static void waitRawTap(Arduino_GFX* gfx, uint16_t* outRawX, uint16_t* outRawY) {
+    uint16_t tx, ty;
+    while (!gt911ReadTouch(&tx, &ty)) { delay(10); }
+    *outRawX = gt911LastRawX();
+    *outRawY = gt911LastRawY();
+    // debounce — wait for release
+    delay(100);
+    while (gt911ReadTouch(&tx, &ty)) { delay(10); }
+    delay(100);
+}
+
+void DisplayUI::calibrateTouch() {
+    const int inset = 40;
+    const int targets[2][2] = {
+        { inset,             inset               },
+        { SCREEN_WIDTH-inset, SCREEN_HEIGHT-inset }
+    };
+    const char* labels[2] = { "Tap top-left", "Tap bottom-right" };
+
+    uint16_t rawCorners[2][2];
+
+    for (int step = 0; step < 2; step++) {
+        _gfx->fillScreen(COL_BG);
+        drawCenteredText("Touch Calibration", SCREEN_WIDTH/2, 80, 3, COL_ACCENT, COL_BG);
+        drawCenteredText(labels[step], SCREEN_WIDTH/2, SCREEN_HEIGHT/2, 3, COL_FG, COL_BG);
+
+        int cx = targets[step][0], cy = targets[step][1];
+        // Crosshair
+        _gfx->drawLine(cx - 20, cy, cx + 20, cy, COL_ACCENT);
+        _gfx->drawLine(cx, cy - 20, cx, cy + 20, COL_ACCENT);
+        _gfx->drawCircle(cx, cy, 14, COL_ACCENT);
+        _gfx->drawCircle(cx, cy, 6, COL_ACCENT);
+
+        waitRawTap(_gfx, &rawCorners[step][0], &rawCorners[step][1]);
+
+        _gfx->fillCircle(cx, cy, 10, 0x07E0);  // green = captured
+        delay(300);
+    }
+
+    auto& c = touchCalib();
+    c.rawTlX = rawCorners[0][0]; c.rawTlY = rawCorners[0][1];
+    c.rawBrX = rawCorners[1][0]; c.rawBrY = rawCorners[1][1];
+    c.tlX = targets[0][0]; c.tlY = targets[0][1];
+    c.brX = targets[1][0]; c.brY = targets[1][1];
+    c.done = true;
+}
+
+void DisplayUI::begin() {
+    panelPowerOn();         // backlight + touch RST release
+    _gfx = createDSIDisplay();
+    _gfx->begin();
+
+    // --- Color test: confirms framebuffer + DSI pipe are working ---
+    _gfx->fillScreen(0xF800); _gfx->flush(true); delay(600);  // red
+    _gfx->fillScreen(0x07E0); _gfx->flush(true); delay(600);  // green
+    _gfx->fillScreen(0x001F); _gfx->flush(true); delay(600);  // blue
+
+    _gfx->fillScreen(COL_BG);
+    _gfx->flush(true);
+    touchBegin();           // I2C for GT911
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+void DisplayUI::drawCenteredText(const String& s, int cx, int cy, int size,
+                                 uint16_t fg, uint16_t bg) {
+    _gfx->setTextSize(size);
+    _gfx->setTextColor(fg, bg);
+    int16_t x1, y1;
+    uint16_t w, h;
+    _gfx->getTextBounds(s.c_str(), 0, 0, &x1, &y1, &w, &h);
+    _gfx->setCursor(cx - w / 2, cy - h / 2);
+    _gfx->print(s);
+}
+
+void DisplayUI::drawHeader(const String& text) {
+    _gfx->fillRect(0, 0, SCREEN_WIDTH, HDR_H, COL_HEADER_BG);
+    drawCenteredText(text, SCREEN_WIDTH / 2, HDR_H / 2, 3, COL_BG, COL_HEADER_BG);
+}
+
+void DisplayUI::drawButton(int x, int y, int w, int h,
+                           const char* label, uint16_t bg, uint16_t fg, int textSize) {
+    _gfx->fillRoundRect(x + 2, y + 2, w - 4, h - 4, 8, bg);
+    const char* draw = label;
+    if      (strcmp(label, "$") == 0) draw = "PAY";
+    else if (strcmp(label, "<") == 0) draw = "DEL";
+    else if (strcmp(label, "C") == 0) draw = "CLR";
+    drawCenteredText(draw, x + w / 2, y + h / 2, textSize, fg, bg);
+}
+
+// ============================================================
+// Screens
+// ============================================================
+void DisplayUI::showSplash(const String& merchantName) {
+    _screen = Screen::SPLASH;
+    _gfx->fillScreen(COL_BG);
+    _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ACCENT);
+    _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ACCENT);
+
+    drawCenteredText("STACKED", SCREEN_WIDTH / 2, 280, 7, COL_ACCENT, COL_BG);
+    drawCenteredText("Bitcoin Point of Sale", SCREEN_WIDTH / 2, 360, 2, COL_FG, COL_BG);
+
+    if (merchantName.length() > 0) {
+        drawCenteredText(merchantName, SCREEN_WIDTH / 2, 430, 2, COL_DIM, COL_BG);
+    }
+    drawCenteredText("Lightning Network", SCREEN_WIDTH / 2, 500, 2, COL_DIM, COL_BG);
+}
+
+void DisplayUI::showSetupInfo() {
+    _screen = Screen::SETUP_INFO;
+    _gfx->fillScreen(COL_BG);
+    _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ACCENT);
+    _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ACCENT);
+
+    drawCenteredText("POS SETUP", SCREEN_WIDTH / 2, 80, 4, COL_ACCENT, COL_BG);
+
+    drawCenteredText("Connect to WiFi:", SCREEN_WIDTH / 2, 220, 2, COL_FG, COL_BG);
+    drawCenteredText(SETUP_AP_SSID,       SCREEN_WIDTH / 2, 280, 3, COL_ACCENT, COL_BG);
+
+    drawCenteredText("Then open browser to:", SCREEN_WIDTH / 2, 400, 2, COL_FG, COL_BG);
+    drawCenteredText(SETUP_AP_IP,             SCREEN_WIDTH / 2, 460, 3, COL_ACCENT, COL_BG);
+
+    drawCenteredText("Enter WiFi details",       SCREEN_WIDTH / 2, 600, 2, COL_DIM, COL_BG);
+    drawCenteredText("and Stacked API key",      SCREEN_WIDTH / 2, 640, 2, COL_DIM, COL_BG);
+}
+
+void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
+    _screen = Screen::AMOUNT_ENTRY;
+    _gfx->fillScreen(COL_BG);
+    drawHeader("Enter Amount");
+
+    // Temporary debug: show touch controller init status (big + bright)
+    drawCenteredText(gt911StatusStr(), SCREEN_WIDTH / 2, SCREEN_HEIGHT - 50,
+                     2, COL_ACCENT, COL_BG);
+
+    // Amount box
+    _gfx->fillRoundRect(15, AMT_BOX_Y, SCREEN_WIDTH - 30, AMT_BOX_H, 8, COL_KEYPAD_BG);
+    _gfx->drawRoundRect(15, AMT_BOX_Y, SCREEN_WIDTH - 30, AMT_BOX_H, 8, COL_ACCENT);
+
+    _gfx->setTextColor(COL_ACCENT, COL_KEYPAD_BG);
+    _gfx->setTextSize(4);
+    _gfx->setCursor(30, AMT_BOX_Y + 28);
+    _gfx->print("$");
+
+    String disp = amount.isEmpty() ? "0.00" : amount;
+    String right = disp + " " + currency;
+    _gfx->setTextSize(4);
+    _gfx->setTextColor(COL_FG, COL_KEYPAD_BG);
+    int16_t x1, y1; uint16_t w, h;
+    _gfx->getTextBounds(right.c_str(), 0, 0, &x1, &y1, &w, &h);
+    _gfx->setCursor(SCREEN_WIDTH - 30 - w, AMT_BOX_Y + 28);
+    _gfx->print(right);
+
+    // Keypad
+    for (int r = 0; r < KP_ROWS; r++) {
+        for (int c = 0; c < KP_COLS; c++) {
+            const char* lbl = KP[r][c];
+            if (strlen(lbl) == 0) continue;
+
+            int x = KP_X0 + c * (KP_BW + KP_GAP);
+            int y = KP_Y0 + r * (KP_BH + KP_GAP);
+            uint16_t bg = COL_KEYPAD_BG, fg = COL_KEYPAD_FG;
+
+            if (strcmp(lbl, "$") == 0) { bg = COL_ACCENT; fg = COL_BG; }
+            else if (strcmp(lbl, "<") == 0 || strcmp(lbl, "C") == 0) { bg = 0x3186; }
+
+            drawButton(x, y, KP_BW, KP_BH, lbl, bg, fg, 3);
+        }
+    }
+}
+
+void DisplayUI::showLoading(const String& message) {
+    _screen = Screen::LOADING;
+    _gfx->fillScreen(COL_BG);
+    drawHeader("Stacked");
+    drawCenteredText(message, SCREEN_WIDTH / 2, 380, 3, COL_FG, COL_BG);
+    drawCenteredText(". . .", SCREEN_WIDTH / 2, 450, 3, COL_ACCENT, COL_BG);
+}
+
+void DisplayUI::showQR(const String& bolt11, uint64_t sats, float nzd,
+                       int secsLeft, int refreshCount) {
+    _screen = Screen::QR_DISPLAY;
+    _gfx->fillScreen(COL_BG);
+
+    // Amount at top
+    if (nzd > 0) {
+        char s[16]; snprintf(s, sizeof(s), "$%.2f NZD", nzd);
+        drawCenteredText(s, SCREEN_WIDTH / 2, 30, 4, COL_ACCENT, COL_BG);
+    }
+
+    // QR in middle
+    int qrSize = 440;
+    int qrX = (SCREEN_WIDTH - qrSize) / 2;
+    int qrY = 80;
+    String qrData = bolt11;
+    qrData.toUpperCase();
+    drawQRCode(qrData, qrX, qrY, qrSize);
+
+    // Info under QR
+    char satStr[32]; snprintf(satStr, sizeof(satStr), "%lu sats", (unsigned long)sats);
+    drawCenteredText(satStr, SCREEN_WIDTH / 2, 560, 2, COL_FG, COL_BG);
+
+    _gfx->drawFastHLine(30, 600, SCREEN_WIDTH - 60, COL_DIM);
+
+    drawCenteredText("Scan with any Lightning wallet",
+                     SCREEN_WIDTH / 2, 625, 2, COL_FG, COL_BG);
+
+    updateTimer(secsLeft, refreshCount);
+
+    drawCenteredText("Tap to cancel", SCREEN_WIDTH / 2, SCREEN_HEIGHT - 30, 2, COL_DIM, COL_BG);
+}
+
+void DisplayUI::updateTimer(int secsLeft, int refreshCount) {
+    _gfx->fillRect(0, 665, SCREEN_WIDTH, 80, COL_BG);
+
+    char t[8]; snprintf(t, sizeof(t), ":%02d", secsLeft);
+    drawCenteredText(t, SCREEN_WIDTH / 2, 690, 4,
+                     secsLeft < 10 ? COL_ERROR : COL_FG, COL_BG);
+
+    if (refreshCount > 0) {
+        char r[32];
+        snprintf(r, sizeof(r), "refresh %d/%d", refreshCount, MAX_INVOICE_REFRESHES);
+        drawCenteredText(r, SCREEN_WIDTH / 2, 740, 2, COL_DIM, COL_BG);
+    }
+}
+
+void DisplayUI::showPaid(uint64_t sats, float nzd) {
+    _screen = Screen::PAID;
+    _gfx->fillScreen(COL_BG);
+
+    int cx = SCREEN_WIDTH / 2;
+    int cy = 240;
+
+    _gfx->fillCircle(cx, cy, 80, COL_SUCCESS);
+    for (int i = -3; i <= 3; i++) {
+        _gfx->drawLine(cx - 32 + i, cy,       cx - 8 + i, cy + 24, COL_BG);
+        _gfx->drawLine(cx - 8  + i, cy + 24,  cx + 40 + i, cy - 32, COL_BG);
+    }
+
+    drawCenteredText("PAID", cx, 400, 7, COL_SUCCESS, COL_BG);
+
+    char info[64];
+    if (nzd > 0) snprintf(info, sizeof(info), "$%.2f NZD", nzd);
+    else         snprintf(info, sizeof(info), "%lu sats", (unsigned long)sats);
+    drawCenteredText(info, cx, 490, 3, COL_FG, COL_BG);
+    if (nzd > 0) {
+        char s[32]; snprintf(s, sizeof(s), "%lu sats", (unsigned long)sats);
+        drawCenteredText(s, cx, 540, 2, COL_DIM, COL_BG);
+    }
+
+    drawCenteredText("Tap to continue", cx, SCREEN_HEIGHT - 30, 2, COL_DIM, COL_BG);
+}
+
+void DisplayUI::showError(const String& message) {
+    _screen = Screen::ERROR;
+    _gfx->fillScreen(COL_BG);
+
+    int cx = SCREEN_WIDTH / 2;
+    int cy = 230;
+
+    _gfx->fillCircle(cx, cy, 70, COL_ERROR);
+    for (int i = -3; i <= 3; i++) {
+        _gfx->drawLine(cx - 26 + i, cy - 26, cx + 26 + i, cy + 26, COL_BG);
+        _gfx->drawLine(cx + 26 + i, cy - 26, cx - 26 + i, cy + 26, COL_BG);
+    }
+
+    drawCenteredText("ERROR", cx, 370, 5, COL_ERROR, COL_BG);
+
+    // Word-wrap to up to 3 lines
+    _gfx->setTextSize(2);
+    int16_t x1, y1; uint16_t w, h;
+    _gfx->getTextBounds(message.c_str(), 0, 0, &x1, &y1, &w, &h);
+    if ((int)w > SCREEN_WIDTH - 40) {
+        int len = message.length();
+        int third = len / 3;
+        int sp1 = message.indexOf(' ', third);
+        int sp2 = message.indexOf(' ', 2 * third);
+        if (sp1 < 0) sp1 = third;
+        if (sp2 < 0) sp2 = 2 * third;
+        drawCenteredText(message.substring(0, sp1),        cx, 460, 2, COL_FG, COL_BG);
+        drawCenteredText(message.substring(sp1 + 1, sp2),  cx, 495, 2, COL_FG, COL_BG);
+        drawCenteredText(message.substring(sp2 + 1),       cx, 530, 2, COL_FG, COL_BG);
+    } else {
+        drawCenteredText(message, cx, 480, 2, COL_FG, COL_BG);
+    }
+
+    drawCenteredText("Tap to retry", cx, SCREEN_HEIGHT - 30, 2, COL_DIM, COL_BG);
+}
+
+// ============================================================
+// Touch
+// ============================================================
+Key DisplayUI::pollTouch() {
+    uint16_t tx, ty;
+    bool touched = gt911ReadTouch(&tx, &ty);
+
+    // Debug overlay: show last GT911 status + raw coords in a fixed box.
+    {
+        static uint32_t lastShown = 0;
+        uint32_t cur = ((uint32_t)gt911LastStatus() << 24) |
+                       ((uint32_t)gt911LastRawX() << 12) |
+                       (uint32_t)gt911LastRawY();
+        if (cur != lastShown) {
+            _gfx->fillRect(0, 0, SCREEN_WIDTH, 28, COL_BG);
+            char buf[48];
+            snprintf(buf, sizeof(buf), "st=%02X raw=%u,%u tx=%u,%u",
+                     gt911LastStatus(), gt911LastRawX(), gt911LastRawY(), tx, ty);
+            _gfx->setTextColor(COL_ACCENT, COL_BG);
+            _gfx->setTextSize(1);
+            _gfx->setCursor(4, 8);
+            _gfx->print(buf);
+            lastShown = cur;
+        }
+    }
+
+    if (touched) {
+        // Fixed-position marker: confirms "a touch happened" regardless of coords.
+        _gfx->fillCircle(50, SCREEN_HEIGHT / 2, 20, 0x07E0);    // green @ fixed pos
+        // Coord-based marker: confirms the coord transform lands in the viewport.
+        if (tx < SCREEN_WIDTH && ty < SCREEN_HEIGHT) {
+            _gfx->fillCircle(tx, ty, 12, COL_ERROR);
+        }
+    }
+    if (touched && !_wasTouched && (millis() - _lastTouch > 200)) {
+        _wasTouched = true;
+        _lastTouch = millis();
+        if (_screen == Screen::AMOUNT_ENTRY) return hitTest(tx, ty);
+    }
+    if (!touched) _wasTouched = false;
+    return Key::NONE;
+}
+
+bool DisplayUI::anyTouch() {
+    uint16_t tx, ty;
+    bool touched = gt911ReadTouch(&tx, &ty);
+    if (touched) {
+        _gfx->fillCircle(tx, ty, 8, COL_ERROR);
+    }
+    if (touched && !_wasTouched && (millis() - _lastTouch > 300)) {
+        _wasTouched = true;
+        _lastTouch = millis();
+        return true;
+    }
+    if (!touched) _wasTouched = false;
+    return false;
+}
+
+Key DisplayUI::hitTest(int tx, int ty) {
+    if (ty < KP_Y0 || tx < KP_X0) return Key::NONE;
+    int r = (ty - KP_Y0) / (KP_BH + KP_GAP);
+    int c = (tx - KP_X0) / (KP_BW + KP_GAP);
+    if (r < 0 || r >= KP_ROWS || c < 0 || c >= KP_COLS) return Key::NONE;
+    return keyMap(r, c);
+}
+
+// ============================================================
+// QR rendering
+// ============================================================
+void DisplayUI::drawQRCode(const String& data, int x, int y, int areaSize) {
+    QRCode qr;
+    uint8_t buf[qrcode_getBufferSize(QR_VERSION)];
+    qrcode_initText(&qr, buf, QR_VERSION, QR_ECC_LEVEL, data.c_str());
+
+    int modPx = areaSize / qr.size;
+    int totalPx = modPx * qr.size;
+    int ox = x + (areaSize - totalPx) / 2;
+    int oy = y + (areaSize - totalPx) / 2;
+
+    _gfx->fillRect(x - 8, y - 8, areaSize + 16, areaSize + 16, 0xFFFF);
+
+    for (uint8_t qy = 0; qy < qr.size; qy++)
+        for (uint8_t qx = 0; qx < qr.size; qx++)
+            if (qrcode_getModule(&qr, qx, qy))
+                _gfx->fillRect(ox + qx * modPx, oy + qy * modPx, modPx, modPx, 0x0000);
+}

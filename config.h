@@ -1,0 +1,71 @@
+#pragma once
+// ============================================================
+// Stacked POS Configuration
+// ESP32-P4-Function-EV-Board — built-in 7" MIPI-DSI panel
+// ============================================================
+
+// --- Stacked Merchant API ---
+// API key and WiFi creds are stored in NVS (non-volatile storage)
+// and provisioned via either:
+//   A) Captive portal on first boot (device creates WiFi AP)
+//   B) Web Serial config page hosted on Stacked's website
+//   C) Serial console commands
+#define STACKED_API_BASE "https://app.stackedbitcoin.com"
+
+// --- NVS keys ---
+#define NVS_NAMESPACE   "stacked"
+#define NVS_KEY_APIKEY  "api_key"
+#define NVS_KEY_SSID    "wifi_ssid"
+#define NVS_KEY_PASS    "wifi_pass"
+#define NVS_KEY_SETUP   "setup_done"
+
+// --- Setup mode AP ---
+#define SETUP_AP_SSID   "StackedPOS-Setup"
+#define SETUP_AP_PASS   ""
+#define SETUP_AP_IP     "192.168.4.1"
+
+// --- Invoice timing ---
+#define INVOICE_EXPIRY_SEC        60
+#define INVOICE_REFRESH_BUFFER_MS 5000
+#define PAYMENT_POLL_INTERVAL_MS  1500
+#define MAX_INVOICE_REFRESHES     10
+
+// --- Display: built-in MIPI-DSI panel, 480x800 portrait ---
+// Panel driver IC is likely JD9365 (common 480x800 DSI panel).
+// If display stays blank after boot, the driver IC may differ —
+// swap DSI timing + init ops in gfx_config.h accordingly.
+#define SCREEN_WIDTH    480
+#define SCREEN_HEIGHT   800
+#define SCREEN_ROTATION 0
+
+// --- Guition JC4880P433 pin map (verified from JC1060P470 sibling board) ---
+#define I2C_SDA_PIN  7
+#define I2C_SCL_PIN  8
+#define I2C_FREQ_HZ  400000
+
+#define LCD_RST_PIN  5
+#define LCD_BL_PIN   23   // backlight enable (HIGH = on)
+
+// GT911 capacitive touch
+#define TOUCH_INT_PIN  21
+#define TOUCH_RST_PIN  3
+#define GT911_ADDR     0x5D  // alt: 0x14 if INT held low during reset
+
+// --- Colours (RGB565) ---
+#define COL_BG         0x0000
+#define COL_FG         0xFFFF
+#define COL_ACCENT     0xFDA0  // Bitcoin orange
+#define COL_SUCCESS    0x07E0
+#define COL_ERROR      0xF800
+#define COL_KEYPAD_BG  0x2104
+#define COL_KEYPAD_FG  0xFFFF
+#define COL_HEADER_BG  0xFDA0
+#define COL_DIM        0x8410
+
+// --- QR ---
+#define QR_VERSION     6
+#define QR_ECC_LEVEL   0
+
+// --- Timers ---
+#define PAID_DISPLAY_MS   5000
+#define ERROR_DISPLAY_MS  5000
