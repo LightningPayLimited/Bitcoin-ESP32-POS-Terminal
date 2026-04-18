@@ -27,7 +27,7 @@
 // --- Invoice timing ---
 #define INVOICE_EXPIRY_SEC        60
 #define INVOICE_REFRESH_BUFFER_MS 5000
-#define PAYMENT_POLL_INTERVAL_MS  1500
+#define PAYMENT_POLL_INTERVAL_MS  3000
 #define MAX_INVOICE_REFRESHES     10
 
 // --- Display: built-in MIPI-DSI panel, 480x800 portrait ---

@@ -64,17 +64,13 @@ MerchantInvoice StackedAPI::parseInvoiceResponse(const String& resp) {
 
     inv.paymentRequest = result["payment_request"] | "";
     inv.lnurl          = result["lnurl"] | "";
-    // Stacked's polling endpoint uses a short "TX..." reference, which
-    // appears under one of these field names. payment_hash / checking_id
-    // are wrong and produce "No such order" errors.
-    inv.reference      = result["txReference"]  | result["txRef"]
-                       | result["tx_reference"] | result["reference"]
-                       | result["orderId"]      | result["order_id"]
-                       | result["id"]           | "";
-    inv.nzdAmount      = result["nzdAmount"]    | result["nzd_amount"]
-                       | result["amount"]       | 0.0f;
-    inv.satAmount      = result["satAmount"]    | result["sat_amount"]
-                       | (uint64_t)0;
+
+    // Stacked nests the transaction record under result.tx — that's where
+    // the short alphanumeric `reference` and amount fields live.
+    JsonObject tx = result["tx"];
+    inv.reference = tx["reference"] | result["reference"] | "";
+    inv.nzdAmount = tx["nzdAmount"] | result["nzdAmount"] | 0.0f;
+    inv.satAmount = tx["satAmount"] | result["satAmount"] | (uint64_t)0;
 
     Serial.printf("[PARSE] payment_request=%s...  reference=%s\n",
                   inv.paymentRequest.substring(0, 40).c_str(),
@@ -190,12 +186,20 @@ PaymentStatus StackedAPI::checkPayment(const String& reference) {
         return ps;
     }
 
+    // Fields may be at top level OR nested under .tx depending on endpoint
+    JsonObject tx = result["tx"];
+    auto get = [&](const char* key) -> JsonVariantConst {
+        JsonVariantConst v = tx[key];
+        if (v.isNull()) v = result[key];
+        return v;
+    };
+
     ps.ok        = true;
-    ps.reference = result["reference"] | "";
-    ps.status    = result["status"] | "";
-    ps.satAmount = result["satAmount"] | (uint64_t)0;
-    ps.nzdAmount = result["nzdAmount"] | 0.0f;
-    ps.paidDate  = result["paidDate"] | "";
+    ps.reference = get("reference") | "";
+    ps.status    = get("status") | "";
+    ps.satAmount = get("satAmount") | (uint64_t)0;
+    ps.nzdAmount = get("nzdAmount") | 0.0f;
+    ps.paidDate  = get("paidDate") | "";
     ps.isPaid    = (ps.paidDate.length() > 0 && ps.paidDate != "null");
 
     return ps;

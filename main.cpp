@@ -414,14 +414,18 @@ void loop() {
         // Poll payment status
         if (now - lastPollAt >= PAYMENT_POLL_INTERVAL_MS) {
             lastPollAt = now;
+            Serial.printf("[POS] Polling (elapsed=%lus, ref='%s')\n",
+                          elapsed / 1000, activeInvoice.reference.c_str());
             PaymentStatus ps = api.checkPayment(activeInvoice.reference);
 
             if (ps.ok && ps.isPaid) {
                 state = State::PAID;
                 stateEnteredAt = millis();
-                ui.showPaid(ps.satAmount, ps.nzdAmount);
+                float nzd = ps.nzdAmount > 0 ? ps.nzdAmount : activeNzd;
+                uint64_t sats = ps.satAmount > 0 ? ps.satAmount : activeInvoice.satAmount;
+                ui.showPaid(sats, nzd);
                 Serial.printf("[POS] PAID! $%.2f NZD (%lu sats)\n",
-                              ps.nzdAmount, (unsigned long)ps.satAmount);
+                              nzd, (unsigned long)sats);
                 break;
             }
         }
