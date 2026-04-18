@@ -124,9 +124,6 @@ void setup() {
     Serial.println("[BOOT] ui.begin() returned OK");
     Serial.flush();
 
-    // Touch calibration — once per boot for now
-    ui.calibrateTouch();
-
     ui.showSplash();
     delay(1000);
 
@@ -149,39 +146,73 @@ void setup() {
     Serial.printf("[WIFI] SSID='%s' pass.len=%d\n",
                   config.ssid().c_str(), config.pass().length());
     Serial.printf("[WIFI] MAC=%s\n", WiFi.macAddress().c_str());
-    ui.showLoading("Connecting WiFi...");
 
-    // Install verbose event logging
+    // Paint live WiFi status directly on the display so we can see it even
+    // when USB Serial is dropping our output.
+    ui.gfx()->fillScreen(COL_BG);
+    ui.gfx()->setTextSize(2);
+    ui.gfx()->setTextColor(COL_ACCENT, COL_BG);
+    ui.gfx()->setCursor(10, 20);
+    ui.gfx()->printf("WiFi: %s", config.ssid().c_str());
+    ui.gfx()->setCursor(10, 50);
+    ui.gfx()->printf("MAC:  %s", WiFi.macAddress().c_str());
+    ui.gfx()->setCursor(10, 80);
+    ui.gfx()->setTextColor(COL_FG, COL_BG);
+    ui.gfx()->print("Connecting...");
+
+    static uint16_t lastReason = 0;
+    static bool     gotStart = false, gotAssoc = false, gotIP = false;
+
+    // Install verbose event logging — paint each event on the display too.
     WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+        extern DisplayUI ui;
+        auto* gfx = ui.gfx();
+        gfx->setTextSize(2);
         switch (event) {
             case ARDUINO_EVENT_WIFI_STA_START:
+                gotStart = true;
+                gfx->setTextColor(0x07E0, COL_BG);  // green
+                gfx->setCursor(10, 120);
+                gfx->print("STA started      ");
                 Serial.println("[WIFI EV] STA started");
                 break;
             case ARDUINO_EVENT_WIFI_STA_CONNECTED:
-                Serial.printf("[WIFI EV] Associated to AP (ch=%u, auth=%u)\n",
+                gotAssoc = true;
+                gfx->setTextColor(0x07E0, COL_BG);
+                gfx->setCursor(10, 150);
+                gfx->printf("Associated ch=%u ",
+                            info.wifi_sta_connected.channel);
+                Serial.printf("[WIFI EV] Associated ch=%u auth=%u\n",
                               info.wifi_sta_connected.channel,
                               info.wifi_sta_connected.authmode);
                 break;
             case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-                Serial.printf("[WIFI EV] Got IP: %s  GW: %s  DNS: %s\n",
-                              IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str(),
-                              IPAddress(info.got_ip.ip_info.gw.addr).toString().c_str(),
-                              WiFi.dnsIP().toString().c_str());
+                gotIP = true;
+                gfx->setTextColor(0x07E0, COL_BG);
+                gfx->setCursor(10, 180);
+                gfx->printf("IP: %s        ",
+                            IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
+                Serial.printf("[WIFI EV] Got IP: %s\n",
+                              IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
                 break;
             case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
+                lastReason = info.wifi_sta_disconnected.reason;
                 const char* r;
-                switch (info.wifi_sta_disconnected.reason) {
+                switch (lastReason) {
                     case WIFI_REASON_AUTH_EXPIRE:       r = "AUTH_EXPIRE"; break;
-                    case WIFI_REASON_AUTH_FAIL:         r = "AUTH_FAIL (wrong password?)"; break;
-                    case WIFI_REASON_NO_AP_FOUND:       r = "NO_AP_FOUND (SSID not visible)"; break;
+                    case WIFI_REASON_AUTH_FAIL:         r = "AUTH_FAIL (bad pass)"; break;
+                    case WIFI_REASON_NO_AP_FOUND:       r = "NO_AP (not visible)"; break;
                     case WIFI_REASON_ASSOC_FAIL:        r = "ASSOC_FAIL"; break;
-                    case WIFI_REASON_HANDSHAKE_TIMEOUT: r = "HANDSHAKE_TIMEOUT (wrong password?)"; break;
-                    case WIFI_REASON_BEACON_TIMEOUT:    r = "BEACON_TIMEOUT (signal too weak?)"; break;
-                    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: r = "4WAY_HANDSHAKE_TIMEOUT"; break;
+                    case WIFI_REASON_HANDSHAKE_TIMEOUT: r = "HANDSHAKE_TO"; break;
+                    case WIFI_REASON_BEACON_TIMEOUT:    r = "BEACON_TO (weak)"; break;
+                    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: r = "4WAY_TO"; break;
+                    case 8:                             r = "ASSOC_LEAVE"; break;
                     default:                            r = "other"; break;
                 }
-                Serial.printf("[WIFI EV] Disconnected — reason %u (%s)\n",
-                              info.wifi_sta_disconnected.reason, r);
+                gfx->setTextColor(COL_ERROR, COL_BG);
+                gfx->setCursor(10, 210);
+                gfx->printf("Disc %u %-16s", lastReason, r);
+                Serial.printf("[WIFI EV] Disconnect reason=%u (%s)\n", lastReason, r);
                 break;
             }
             default: break;

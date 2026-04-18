@@ -16,9 +16,6 @@ class DisplayUI {
 public:
     void begin();
 
-    /// Run 2-point touch calibration. Blocks until two taps are received.
-    void calibrateTouch();
-
     void showSplash(const String& merchantName = "");
     void showSetupInfo();
     void showAmountEntry(const String& amount, const String& currency);

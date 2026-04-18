@@ -34,54 +34,6 @@ static Key keyMap(int r, int c) {
 // ============================================================
 // begin()
 // ============================================================
-// Internal helper: wait for one tap, return raw chip coords
-static void waitRawTap(Arduino_GFX* gfx, uint16_t* outRawX, uint16_t* outRawY) {
-    uint16_t tx, ty;
-    while (!gt911ReadTouch(&tx, &ty)) { delay(10); }
-    *outRawX = gt911LastRawX();
-    *outRawY = gt911LastRawY();
-    // debounce — wait for release
-    delay(100);
-    while (gt911ReadTouch(&tx, &ty)) { delay(10); }
-    delay(100);
-}
-
-void DisplayUI::calibrateTouch() {
-    const int inset = 40;
-    const int targets[2][2] = {
-        { inset,             inset               },
-        { SCREEN_WIDTH-inset, SCREEN_HEIGHT-inset }
-    };
-    const char* labels[2] = { "Tap top-left", "Tap bottom-right" };
-
-    uint16_t rawCorners[2][2];
-
-    for (int step = 0; step < 2; step++) {
-        _gfx->fillScreen(COL_BG);
-        drawCenteredText("Touch Calibration", SCREEN_WIDTH/2, 80, 3, COL_ACCENT, COL_BG);
-        drawCenteredText(labels[step], SCREEN_WIDTH/2, SCREEN_HEIGHT/2, 3, COL_FG, COL_BG);
-
-        int cx = targets[step][0], cy = targets[step][1];
-        // Crosshair
-        _gfx->drawLine(cx - 20, cy, cx + 20, cy, COL_ACCENT);
-        _gfx->drawLine(cx, cy - 20, cx, cy + 20, COL_ACCENT);
-        _gfx->drawCircle(cx, cy, 14, COL_ACCENT);
-        _gfx->drawCircle(cx, cy, 6, COL_ACCENT);
-
-        waitRawTap(_gfx, &rawCorners[step][0], &rawCorners[step][1]);
-
-        _gfx->fillCircle(cx, cy, 10, 0x07E0);  // green = captured
-        delay(300);
-    }
-
-    auto& c = touchCalib();
-    c.rawTlX = rawCorners[0][0]; c.rawTlY = rawCorners[0][1];
-    c.rawBrX = rawCorners[1][0]; c.rawBrY = rawCorners[1][1];
-    c.tlX = targets[0][0]; c.tlY = targets[0][1];
-    c.brX = targets[1][0]; c.brY = targets[1][1];
-    c.done = true;
-}
-
 void DisplayUI::begin() {
     panelPowerOn();         // backlight + touch RST release
     _gfx = createDSIDisplay();
@@ -167,9 +119,6 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
     _gfx->fillScreen(COL_BG);
     drawHeader("Enter Amount");
 
-    // Temporary debug: show touch controller init status (big + bright)
-    drawCenteredText(gt911StatusStr(), SCREEN_WIDTH / 2, SCREEN_HEIGHT - 50,
-                     2, COL_ACCENT, COL_BG);
 
     // Amount box
     _gfx->fillRoundRect(15, AMT_BOX_Y, SCREEN_WIDTH - 30, AMT_BOX_H, 8, COL_KEYPAD_BG);
@@ -332,33 +281,6 @@ Key DisplayUI::pollTouch() {
     uint16_t tx, ty;
     bool touched = gt911ReadTouch(&tx, &ty);
 
-    // Debug overlay: show last GT911 status + raw coords in a fixed box.
-    {
-        static uint32_t lastShown = 0;
-        uint32_t cur = ((uint32_t)gt911LastStatus() << 24) |
-                       ((uint32_t)gt911LastRawX() << 12) |
-                       (uint32_t)gt911LastRawY();
-        if (cur != lastShown) {
-            _gfx->fillRect(0, 0, SCREEN_WIDTH, 28, COL_BG);
-            char buf[48];
-            snprintf(buf, sizeof(buf), "st=%02X raw=%u,%u tx=%u,%u",
-                     gt911LastStatus(), gt911LastRawX(), gt911LastRawY(), tx, ty);
-            _gfx->setTextColor(COL_ACCENT, COL_BG);
-            _gfx->setTextSize(1);
-            _gfx->setCursor(4, 8);
-            _gfx->print(buf);
-            lastShown = cur;
-        }
-    }
-
-    if (touched) {
-        // Fixed-position marker: confirms "a touch happened" regardless of coords.
-        _gfx->fillCircle(50, SCREEN_HEIGHT / 2, 20, 0x07E0);    // green @ fixed pos
-        // Coord-based marker: confirms the coord transform lands in the viewport.
-        if (tx < SCREEN_WIDTH && ty < SCREEN_HEIGHT) {
-            _gfx->fillCircle(tx, ty, 12, COL_ERROR);
-        }
-    }
     if (touched && !_wasTouched && (millis() - _lastTouch > 200)) {
         _wasTouched = true;
         _lastTouch = millis();
