@@ -146,5 +146,5 @@ Auth: `api-key` header.
 - [ ] Receipt printing (thermal printer via UART)
 - [ ] ESP Web Tools flash button on Stacked website
 - [ ] Transaction history screen
-- [x] Settings screen (WiFi reconfigure, currency toggle)
+- [x] Settings screen (WiFi reconfigure)
 - [ ] NFC tap-to-pay support
