@@ -1,5 +1,6 @@
 #include "stacked_api.h"
 #include "config.h"
+#include "stacked_ca.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
@@ -234,7 +235,7 @@ MerchantProfile StackedAPI::getProfile() {
 String StackedAPI::doGet(const String& url) {
     HTTPClient http;
     WiFiClientSecure client;
-    client.setInsecure();
+    client.setCACert(STACKED_ROOT_CA);
     client.setTimeout(20);
     client.setHandshakeTimeout(20);
 
@@ -266,7 +267,7 @@ String StackedAPI::doGet(const String& url) {
 String StackedAPI::doPost(const String& url, const String& body) {
     HTTPClient http;
     WiFiClientSecure client;
-    client.setInsecure();
+    client.setCACert(STACKED_ROOT_CA);
     client.setTimeout(20);            // 20s socket timeout
     client.setHandshakeTimeout(20);   // 20s TLS handshake
 
