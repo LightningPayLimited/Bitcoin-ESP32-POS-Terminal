@@ -1,9 +1,13 @@
 #include "setup_portal.h"
 #include "config.h"
+#include "display_ui.h"
+#include "printer.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <ArduinoJson.h>
+
+extern DisplayUI ui;
 
 // ================================================================
 // Captive portal HTML — self-contained setup form
@@ -266,6 +270,20 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
         // Check serial too
         if (checkSerial(store)) {
             saved = true;
+        }
+
+        // On-device Test Print button — fires a fake-receipt print so the
+        // merchant can verify the printer before completing setup.
+        if (ui.pollTouch() == Key::TEST_PRINT) {
+            Serial.println("[SETUP] Test print requested (touch)");
+            printer.printReceipt(
+                "STACKED POS (TEST)",
+                "123-456-789",
+                12.34f,
+                21000,
+                "TEST-RECEIPT",
+                "2026-05-01 12:34:56"
+            );
         }
 
         delay(10);

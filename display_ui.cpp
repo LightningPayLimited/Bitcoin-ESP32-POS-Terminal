@@ -16,6 +16,12 @@
 #define KP_BH      130
 #define KP_GAP     7
 
+// Test Print button on the SETUP_INFO screen
+#define TP_X       60
+#define TP_Y       700
+#define TP_W       360
+#define TP_H       70
+
 static const char* KP[KP_ROWS][KP_COLS] = {
     {"1", "2", "3", "<"},
     {"4", "5", "6", "C"},
@@ -182,6 +188,12 @@ void DisplayUI::showSetupInfo() {
 
     drawCenteredText("Enter WiFi details",       SCREEN_WIDTH / 2, 600, 2, COL_DIM, COL_BG);
     drawCenteredText("and Stacked API key",      SCREEN_WIDTH / 2, 640, 2, COL_DIM, COL_BG);
+
+    // Test Print button — exercise the thermal printer without a real sale
+    _gfx->fillRoundRect(TP_X, TP_Y, TP_W, TP_H, 10, COL_KEYPAD_BG);
+    _gfx->drawRoundRect(TP_X, TP_Y, TP_W, TP_H, 10, COL_ACCENT);
+    drawCenteredText("Test Print", SCREEN_WIDTH / 2, TP_Y + TP_H / 2,
+                     3, COL_ACCENT, COL_KEYPAD_BG);
 }
 
 void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
@@ -361,6 +373,12 @@ Key DisplayUI::pollTouch() {
             Key k = hitTest(tx, ty);
             Serial.printf("[TOUCH] hit -> key=%d\n", (int)k);
             return k;
+        }
+        if (_screen == Screen::SETUP_INFO) {
+            if (tx >= TP_X && tx < TP_X + TP_W &&
+                ty >= TP_Y && ty < TP_Y + TP_H) {
+                return Key::TEST_PRINT;
+            }
         }
     }
     if (!touched) _wasTouched = false;

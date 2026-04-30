@@ -48,7 +48,7 @@ enum class State {
 static State        state = State::BOOT;
 static ConfigStore  config;
 static SetupPortal  portal;
-static DisplayUI    ui;
+DisplayUI           ui;  // non-static — referenced from setup_portal.cpp
 static StackedAPI   api;
 
 static String merchantName = "";
