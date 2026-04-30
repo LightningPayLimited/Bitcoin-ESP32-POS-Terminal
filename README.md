@@ -141,13 +141,10 @@ Auth: `api-key` header.
 
 ## TODO
 
-- [ ] Run TFT_eSPI touch calibration and update config
-- [ ] Pin Stacked TLS root CA (currently `setInsecure()`)
-- [ ] Buzzer/LED on payment success
+- [x] Pin Stacked TLS root CA (currently `setInsecure()`)
 - [ ] Sound via onboard ES8311 codec (cha-ching!)
 - [ ] Receipt printing (thermal printer via UART)
-- [ ] Port to built-in 7" MIPI-DSI display (ESP-IDF + LVGL)
 - [ ] ESP Web Tools flash button on Stacked website
 - [ ] Transaction history screen
-- [ ] Settings screen (WiFi reconfigure, currency toggle)
+- [x] Settings screen (WiFi reconfigure)
 - [ ] NFC tap-to-pay support
