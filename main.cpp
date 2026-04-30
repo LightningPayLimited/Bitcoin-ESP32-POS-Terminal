@@ -29,6 +29,7 @@
 #include "setup_portal.h"
 #include "display_ui.h"
 #include "stacked_api.h"
+#include "printer.h"
 
 // ================================================================
 // State
@@ -122,6 +123,9 @@ void setup() {
 
     // Factory-reset button — active-low with internal pull-up
     pinMode(FACTORY_RESET_PIN, INPUT_PULLUP);
+
+    // Thermal printer — initialises whether or not one is plugged in
+    printer.begin();
 
     Serial.println("[BOOT] Calling ui.begin()...");
     Serial.flush();
@@ -485,6 +489,8 @@ void loop() {
                 ui.showPaid(sats, nzd);
                 Serial.printf("[POS] PAID! $%.2f NZD (%lu sats)\n",
                               nzd, (unsigned long)sats);
+                printer.printReceipt(merchantName, "", nzd, sats,
+                                     activeInvoice.reference, ps.paidDate);
                 break;
             }
         }
