@@ -36,6 +36,16 @@ public:
     Screen    screen() const { return _screen; }
     Arduino_GFX* gfx() { return _gfx; }
 
+    /// Set the text font + scale based on the legacy 1..10 size.
+    /// Use this in place of gfx()->setTextSize() so the proportional sans
+    /// fonts are used everywhere instead of the default 5x7 bitmap.
+    void applyTextSize(int size);
+
+    /// Set the GFX cursor so the next print() draws with its visual
+    /// top-left at (x, yTop). Required because GFXfonts use baseline
+    /// positioning, not top-left like the default 5x7 font.
+    void setCursorTopLeft(int x, int yTop, int size);
+
 private:
     Arduino_GFX* _gfx = nullptr;
     Screen _screen = Screen::SPLASH;

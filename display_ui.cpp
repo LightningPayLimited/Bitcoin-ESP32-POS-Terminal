@@ -1,5 +1,7 @@
 #include "display_ui.h"
 #include "config.h"
+#include "logo.h"
+#include "pos_fonts.h"
 #include <qrcode.h>
 
 // ============================================================
@@ -128,14 +130,31 @@ void DisplayUI::begin() {
 // ============================================================
 // Helpers
 // ============================================================
+void DisplayUI::applyTextSize(int size) {
+    applyPosFont(_gfx, size);
+}
+
+void DisplayUI::setCursorTopLeft(int x, int yTop, int size) {
+    applyPosFont(_gfx, size);
+    int16_t x1, y1;
+    uint16_t w, h;
+    // Sample text with both ascender and descender so we land on a
+    // sensible baseline regardless of which characters get drawn next.
+    _gfx->getTextBounds("Mg", 0, 0, &x1, &y1, &w, &h);
+    _gfx->setCursor(x, yTop - y1);  // y1 is negative for GFXfonts
+}
+
 void DisplayUI::drawCenteredText(const String& s, int cx, int cy, int size,
                                  uint16_t fg, uint16_t bg) {
-    _gfx->setTextSize(size);
+    applyPosFont(_gfx, size);
     _gfx->setTextColor(fg, bg);
     int16_t x1, y1;
     uint16_t w, h;
     _gfx->getTextBounds(s.c_str(), 0, 0, &x1, &y1, &w, &h);
-    _gfx->setCursor(cx - w / 2, cy - h / 2);
+    // GFXfonts return a negative y1 because the bounding box extends above
+    // the cursor's baseline. Subtract the offsets so the rendered glyphs are
+    // actually centred on (cx, cy).
+    _gfx->setCursor(cx - w / 2 - x1, cy - h / 2 - y1);
     _gfx->print(s);
 }
 
@@ -163,13 +182,17 @@ void DisplayUI::showSplash(const String& merchantName) {
     _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ACCENT);
     _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ACCENT);
 
-    drawCenteredText("STACKED", SCREEN_WIDTH / 2, 280, 7, COL_ACCENT, COL_BG);
-    drawCenteredText("Bitcoin Point of Sale", SCREEN_WIDTH / 2, 360, 2, COL_FG, COL_BG);
+    int logoX = (SCREEN_WIDTH - LOGO_W) / 2;
+    int logoY = 80;
+    _gfx->draw16bitRGBBitmap(logoX, logoY, LOGO_RGB565, LOGO_W, LOGO_H);
+
+    drawCenteredText("STACKED", SCREEN_WIDTH / 2, 380, 7, COL_ACCENT, COL_BG);
+    drawCenteredText("Bitcoin Point of Sale", SCREEN_WIDTH / 2, 460, 2, COL_FG, COL_BG);
 
     if (merchantName.length() > 0) {
-        drawCenteredText(merchantName, SCREEN_WIDTH / 2, 430, 2, COL_DIM, COL_BG);
+        drawCenteredText(merchantName, SCREEN_WIDTH / 2, 530, 2, COL_DIM, COL_BG);
     }
-    drawCenteredText("Lightning Network", SCREEN_WIDTH / 2, 500, 2, COL_DIM, COL_BG);
+    drawCenteredText("Lightning Network", SCREEN_WIDTH / 2, 600, 2, COL_DIM, COL_BG);
 }
 
 void DisplayUI::showSetupInfo() {
@@ -207,18 +230,23 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
     _gfx->fillRoundRect(15, AMT_BOX_Y, SCREEN_WIDTH - 30, AMT_BOX_H, 8, COL_KEYPAD_BG);
     _gfx->drawRoundRect(15, AMT_BOX_Y, SCREEN_WIDTH - 30, AMT_BOX_H, 8, COL_ACCENT);
 
-    _gfx->setTextColor(COL_ACCENT, COL_KEYPAD_BG);
-    _gfx->setTextSize(4);
-    _gfx->setCursor(30, AMT_BOX_Y + 28);
-    _gfx->print("$");
-
     String disp = amount.isEmpty() ? "0.00" : amount;
     String right = disp + " " + currency;
-    _gfx->setTextSize(4);
-    _gfx->setTextColor(COL_FG, COL_KEYPAD_BG);
+
+    // GFXfont baseline-positioning: use getTextBounds + (x1,y1) so "$" and
+    // the amount string sit visually centred inside the rounded box.
+    int boxCy = AMT_BOX_Y + AMT_BOX_H / 2;
     int16_t x1, y1; uint16_t w, h;
+
+    applyPosFont(_gfx, 4);
+    _gfx->setTextColor(COL_ACCENT, COL_KEYPAD_BG);
+    _gfx->getTextBounds("$", 0, 0, &x1, &y1, &w, &h);
+    _gfx->setCursor(30 - x1, boxCy - h / 2 - y1);
+    _gfx->print("$");
+
+    _gfx->setTextColor(COL_FG, COL_KEYPAD_BG);
     _gfx->getTextBounds(right.c_str(), 0, 0, &x1, &y1, &w, &h);
-    _gfx->setCursor(SCREEN_WIDTH - 30 - w, AMT_BOX_Y + 28);
+    _gfx->setCursor(SCREEN_WIDTH - 30 - w - x1, boxCy - h / 2 - y1);
     _gfx->print(right);
 
     // Keypad
@@ -299,15 +327,12 @@ void DisplayUI::showPaid(uint64_t sats, float nzd) {
     _gfx->fillScreen(COL_BG);
 
     int cx = SCREEN_WIDTH / 2;
-    int cy = 240;
 
-    _gfx->fillCircle(cx, cy, 80, COL_SUCCESS);
-    for (int i = -3; i <= 3; i++) {
-        _gfx->drawLine(cx - 32 + i, cy,       cx - 8 + i, cy + 24, COL_BG);
-        _gfx->drawLine(cx - 8  + i, cy + 24,  cx + 40 + i, cy - 32, COL_BG);
-    }
+    int logoX = (SCREEN_WIDTH - LOGO_W) / 2;
+    int logoY = 60;
+    _gfx->draw16bitRGBBitmap(logoX, logoY, LOGO_RGB565, LOGO_W, LOGO_H);
 
-    drawCenteredText("PAID", cx, 400, 7, COL_SUCCESS, COL_BG);
+    drawCenteredText("PAID", cx, 380, 7, COL_ACCENT, COL_BG);
 
     char info[64];
     if (nzd > 0) snprintf(info, sizeof(info), "$%.2f NZD", nzd);
@@ -336,8 +361,8 @@ void DisplayUI::showError(const String& message) {
 
     drawCenteredText("ERROR", cx, 370, 5, COL_ERROR, COL_BG);
 
-    // Word-wrap to up to 3 lines
-    _gfx->setTextSize(2);
+    // Word-wrap to up to 3 lines (use the same font we'll draw with)
+    applyPosFont(_gfx, 2);
     int16_t x1, y1; uint16_t w, h;
     _gfx->getTextBounds(message.c_str(), 0, 0, &x1, &y1, &w, &h);
     if ((int)w > SCREEN_WIDTH - 40) {

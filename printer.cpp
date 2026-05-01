@@ -1,5 +1,6 @@
 #include "printer.h"
 #include "config.h"
+#include "logo.h"
 #include <Adafruit_Thermal.h>
 #include <HardwareSerial.h>
 
@@ -30,36 +31,53 @@ void Printer::printReceipt(const String& merchantName,
     if (!_ready) return;
 
     thermal.wake();
+    // Hard reset to clear any residual state the library's setDefault() might
+    // not touch on a clone (ESC @ — full re-initialise).
+    printerSerial.write(0x1B);
+    printerSerial.write(0x40);
+    delay(50);
     thermal.setDefault();
+    thermal.setLineHeight(20);
+    // Thermal printer character cells are 12 wide × 24 tall by default — a
+    // 1:2 aspect that reads as "stretched". Set ESC ! with bit 5 (double
+    // width) so each cell becomes 24×24 — a clean square per character.
+    //   bit 0 = Font B, bit 3 = emphasised, bit 4 = double-height,
+    //   bit 5 = double-width, bit 7 = underline
+    printerSerial.write(0x1B);
+    printerSerial.write(0x21);
+    printerSerial.write(0x20);
 
-    // ---- Header: merchant name centred + bold ----
+    // ---- Logo at top, centred ----
+    // The bitmap is pre-padded to full paper width (LOGO_PRINT_W = 384) with
+    // the actual logo offset to land centred — DC2 * always prints from the
+    // left margin and ignores justify('C').
     thermal.justify('C');
+    thermal.printBitmap(LOGO_PRINT_W, LOGO_PRINT_H, LOGO_MONO);
+    thermal.feed(1);
+
+    // ---- Header: merchant name (bold for emphasis) ----
     thermal.boldOn();
-    thermal.setSize('L');
     thermal.println(merchantName.length() ? merchantName : "STACKED POS");
-    thermal.setSize('S');
     thermal.boldOff();
     if (gstNumber.length()) {
         thermal.printf("GST: %s\n", gstNumber.c_str());
     }
     thermal.println();
 
-    // ---- Big PAID banner ----
+    // ---- PAID banner ----
     thermal.boldOn();
-    thermal.setSize('L');
     thermal.println("PAID");
     thermal.boldOff();
-    thermal.setSize('M');
     thermal.println("Bitcoin / Lightning");
     thermal.println();
 
     // ---- Amounts (left-aligned) ----
     thermal.justify('L');
-    thermal.setSize('L');
+    thermal.boldOn();
     char nzdBuf[32];
     snprintf(nzdBuf, sizeof(nzdBuf), "$%.2f NZD", nzdAmount);
     thermal.println(nzdBuf);
-    thermal.setSize('S');
+    thermal.boldOff();
     thermal.printf("%lu sats\n", (unsigned long)satAmount);
     thermal.println();
 

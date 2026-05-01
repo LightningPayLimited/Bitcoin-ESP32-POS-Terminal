@@ -159,13 +159,12 @@ void setup() {
     // Paint live WiFi status directly on the display so we can see it even
     // when USB Serial is dropping our output.
     ui.gfx()->fillScreen(COL_BG);
-    ui.gfx()->setTextSize(2);
     ui.gfx()->setTextColor(COL_ACCENT, COL_BG);
-    ui.gfx()->setCursor(10, 20);
+    ui.setCursorTopLeft(10, 20, 2);
     ui.gfx()->printf("WiFi: %s", config.ssid().c_str());
-    ui.gfx()->setCursor(10, 50);
+    ui.setCursorTopLeft(10, 55, 2);
     ui.gfx()->printf("MAC:  %s", WiFi.macAddress().c_str());
-    ui.gfx()->setCursor(10, 80);
+    ui.setCursorTopLeft(10, 90, 2);
     ui.gfx()->setTextColor(COL_FG, COL_BG);
     ui.gfx()->print("Connecting...");
 
@@ -176,19 +175,18 @@ void setup() {
     WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
         extern DisplayUI ui;
         auto* gfx = ui.gfx();
-        gfx->setTextSize(2);
         switch (event) {
             case ARDUINO_EVENT_WIFI_STA_START:
                 gotStart = true;
                 gfx->setTextColor(0x07E0, COL_BG);  // green
-                gfx->setCursor(10, 120);
+                ui.setCursorTopLeft(10, 130, 2);
                 gfx->print("STA started      ");
                 Serial.println("[WIFI EV] STA started");
                 break;
             case ARDUINO_EVENT_WIFI_STA_CONNECTED:
                 gotAssoc = true;
                 gfx->setTextColor(0x07E0, COL_BG);
-                gfx->setCursor(10, 150);
+                ui.setCursorTopLeft(10, 165, 2);
                 gfx->printf("Associated ch=%u ",
                             info.wifi_sta_connected.channel);
                 Serial.printf("[WIFI EV] Associated ch=%u auth=%u\n",
@@ -198,7 +196,7 @@ void setup() {
             case ARDUINO_EVENT_WIFI_STA_GOT_IP:
                 gotIP = true;
                 gfx->setTextColor(0x07E0, COL_BG);
-                gfx->setCursor(10, 180);
+                ui.setCursorTopLeft(10, 200, 2);
                 gfx->printf("IP: %s        ",
                             IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
                 Serial.printf("[WIFI EV] Got IP: %s\n",
@@ -219,7 +217,7 @@ void setup() {
                     default:                            r = "other"; break;
                 }
                 gfx->setTextColor(COL_ERROR, COL_BG);
-                gfx->setCursor(10, 210);
+                ui.setCursorTopLeft(10, 235, 2);
                 gfx->printf("Disc %u %-16s", lastReason, r);
                 Serial.printf("[WIFI EV] Disconnect reason=%u (%s)\n", lastReason, r);
                 break;
@@ -336,12 +334,11 @@ static void checkFactoryResetButton() {
     if (held >= FACTORY_RESET_HOLD_MS) {
         Serial.println("[SYS] Factory reset triggered — clearing NVS");
         ui.gfx()->fillScreen(COL_BG);
-        ui.gfx()->setTextSize(3);
         ui.gfx()->setTextColor(COL_ERROR, COL_BG);
-        ui.gfx()->setCursor(30, SCREEN_HEIGHT / 2 - 20);
+        ui.setCursorTopLeft(30, SCREEN_HEIGHT / 2 - 40, 3);
         ui.gfx()->print("FACTORY RESET");
-        ui.gfx()->setCursor(30, SCREEN_HEIGHT / 2 + 20);
-        ui.gfx()->setTextSize(2);
+        ui.gfx()->setTextColor(COL_DIM, COL_BG);
+        ui.setCursorTopLeft(30, SCREEN_HEIGHT / 2 + 20, 2);
         ui.gfx()->print("Rebooting...");
         delay(500);
         config.clear();
@@ -354,16 +351,26 @@ static void checkFactoryResetButton() {
         lastSecsShown = secsLeft;
         ui.gfx()->fillScreen(COL_BG);
         ui.gfx()->setTextColor(COL_ACCENT, COL_BG);
-        ui.gfx()->setTextSize(3);
-        ui.gfx()->setCursor(30, 100);
+        ui.setCursorTopLeft(30, 100, 3);
         ui.gfx()->print("Factory reset in");
-        ui.gfx()->setTextSize(10);
-        ui.gfx()->setTextColor(COL_ERROR, COL_BG);
-        ui.gfx()->setCursor(SCREEN_WIDTH/2 - 40, SCREEN_HEIGHT/2);
-        ui.gfx()->printf("%d", secsLeft);
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%d", secsLeft);
+        // Big centred countdown digit using the existing centred-text helper
+        // — easier than computing offsets for the 3x-scaled font manually.
+        ui.gfx()->fillRect(0, SCREEN_HEIGHT/2 - 100, SCREEN_WIDTH, 220, COL_BG);
+        ui.applyTextSize(10);  // sets font + scale; ignored for centring math
+        // Use the public DisplayUI helper that already handles GFXfont metrics.
+        // (drawCenteredText is private — emulate by writing through gfx().)
+        {
+            int16_t x1, y1; uint16_t w, h;
+            ui.gfx()->getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
+            ui.gfx()->setTextColor(COL_ERROR, COL_BG);
+            ui.gfx()->setCursor(SCREEN_WIDTH/2 - w/2 - x1,
+                                SCREEN_HEIGHT/2 - h/2 - y1);
+            ui.gfx()->print(buf);
+        }
         ui.gfx()->setTextColor(COL_DIM, COL_BG);
-        ui.gfx()->setTextSize(2);
-        ui.gfx()->setCursor(30, SCREEN_HEIGHT - 80);
+        ui.setCursorTopLeft(30, SCREEN_HEIGHT - 60, 2);
         ui.gfx()->print("Release to cancel");
     }
 }
