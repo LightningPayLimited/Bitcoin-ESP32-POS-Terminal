@@ -80,8 +80,8 @@
 #define FACTORY_RESET_HOLD_MS   5000
 
 // --- Thermal printer (CSN-A2 over TTL UART) ---
-// Wire ESP32 TX -> printer RX (green), printer TX -> ESP32 RX (yellow).
+// Wire ESP32 TX -> printer RX (yellow), printer TX -> ESP32 RX (green).
 // Printer needs its own 5-9V / 2A supply with shared GND.
-#define PRINTER_TX_PIN  31   // ESP32 -> printer (printer's green wire)
-#define PRINTER_RX_PIN  33   // printer -> ESP32 (printer's yellow wire)
+#define PRINTER_TX_PIN  33   // ESP32 -> printer (printer's yellow wire)
+#define PRINTER_RX_PIN  31   // printer -> ESP32 (printer's green wire)
 #define PRINTER_BAUD    9600
