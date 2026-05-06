@@ -4,6 +4,7 @@
 
 enum class Screen {
     SPLASH, SETUP_INFO, AMOUNT_ENTRY, LOADING, QR_DISPLAY, PAID, ERROR,
+    SCREENSAVER,
 };
 
 enum class Key {
@@ -27,6 +28,10 @@ public:
     void showQR(const String& bolt11, uint64_t sats, float nzd, int secsLeft, int refreshCount);
     void showPaid(uint64_t sats, float nzd);
     void showError(const String& message);
+    void showWifiError(const String& ssid);
+
+    /// Paint the splash screensaver bitmap. Tap exits.
+    void showScreensaver();
 
     void updateTimer(int secsLeft, int refreshCount);
 

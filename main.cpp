@@ -30,6 +30,7 @@
 #include "display_ui.h"
 #include "stacked_api.h"
 #include "printer.h"
+#include "nfc.h"
 
 // ================================================================
 // State
@@ -39,6 +40,7 @@ enum class State {
     SETUP,             // Captive portal running
     WIFI_CONNECTING,
     IDLE,              // Numpad
+    SCREENSAVER,       // Animated splash after inactivity
     CREATING_INVOICE,
     AWAITING_PAYMENT,
     PAID,
@@ -60,10 +62,14 @@ static unsigned long   invoiceCreatedAt = 0;
 static unsigned long   lastPollAt = 0;
 static int             refreshCount = 0;
 static unsigned long   stateEnteredAt = 0;
+static unsigned long   lastActivityAt = 0;
 
 // ================================================================
 // Helpers
 // ================================================================
+static bool checkFactoryResetButton();
+static void wifiRetryWaitMs(unsigned long ms, const String& ssid);
+
 static char keyChar(Key k) {
     const char map[] = "0123456789";
     int idx = (int)k - (int)Key::D0;
@@ -76,6 +82,7 @@ void resetToIdle() {
     activeNzd = 0;
     refreshCount = 0;
     activeInvoice = {};
+    lastActivityAt = millis();
     ui.showAmountEntry(enteredAmount, "NZD");
 }
 
@@ -128,10 +135,16 @@ void setup() {
     printer.begin();
 
     Serial.println("[BOOT] Calling ui.begin()...");
+
+    // NFC reader is initialised AFTER ui.begin() (which calls Wire.begin()).
+    // Done below this println for clarity, see further down.
     Serial.flush();
     ui.begin();
     Serial.println("[BOOT] ui.begin() returned OK");
     Serial.flush();
+
+    // I2C bus is now up — initialise NFC reader on the same bus.
+    nfc.begin();
 
     ui.showSplash();
     delay(1000);
@@ -256,12 +269,15 @@ void setup() {
     }
     Serial.println();
 
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.printf("[WIFI] Final status: %d, RSSI: %d dBm\n",
+    // If the first connect attempt failed, keep retrying forever. The
+    // user has to hold the factory-reset button to wipe NVS and re-enter
+    // setup mode — we no longer auto-clear config on WiFi failure.
+    while (WiFi.status() != WL_CONNECTED) {
+        Serial.printf("[WIFI] Failed (status=%d, RSSI=%d). Retrying...\n",
                       WiFi.status(), WiFi.RSSI());
 
-        // Scan and log what's actually visible
-        Serial.println("[WIFI] Scanning for diagnosis...");
+        // Diagnostic scan — useful for understanding why the AP isn't
+        // joining. Logged to serial only.
         int n = WiFi.scanNetworks(false, true);
         Serial.printf("[WIFI] Visible networks: %d\n", n);
         for (int i = 0; i < n; i++) {
@@ -272,18 +288,22 @@ void setup() {
         }
         WiFi.scanDelete();
 
-        Serial.println("[BOOT] WiFi failed — dropping back into setup mode");
-        ui.showError("WiFi failed. Reconfiguring...");
-        delay(2500);
+        ui.showWifiError(config.ssid());
+        wifiRetryWaitMs(5000, config.ssid());
 
-        // Keep saved creds around so the user can see what was wrong and just
-        // fix the password, but flip the provisioned flag so the portal stays
-        // up until the user saves again.
-        config.markUnprovisioned();
+        WiFi.disconnect(true);
+        delay(200);
+        WiFi.begin(config.ssid().c_str(), config.pass().c_str());
 
-        ui.showSetupInfo();
-        portal.runCaptivePortal(config);
-        return;  // runCaptivePortal reboots on save
+        int tries = 0;
+        while (WiFi.status() != WL_CONNECTED && tries < 40) {
+            delay(500);
+            portal.checkSerial(config);
+            if (checkFactoryResetButton()) {
+                ui.showWifiError(config.ssid());
+            }
+            tries++;
+        }
     }
 
     Serial.printf("[BOOT] WiFi OK: %s\n", WiFi.localIP().toString().c_str());
@@ -312,20 +332,19 @@ void setup() {
 // Loop
 // ================================================================
 // Factory-reset via long-hold of FACTORY_RESET_PIN.
-// Shows a countdown on screen while the button is held.
-static void checkFactoryResetButton() {
+// Shows a countdown on screen while the button is held. Returns true
+// if the countdown UI was being shown but was released before completion,
+// so the caller knows to redraw whatever screen it was on.
+static bool checkFactoryResetButton() {
     static unsigned long pressStart = 0;
     static int lastSecsShown = -1;
 
     bool pressed = (digitalRead(FACTORY_RESET_PIN) == LOW);
     if (!pressed) {
-        if (pressStart != 0 && lastSecsShown >= 0) {
-            // Released before completion — redraw current screen state
-            ui.showAmountEntry("", "NZD");
-        }
+        bool wasShowingCountdown = (pressStart != 0 && lastSecsShown >= 0);
         pressStart = 0;
         lastSecsShown = -1;
-        return;
+        return wasShowingCountdown;
     }
 
     if (pressStart == 0) pressStart = millis();
@@ -373,19 +392,54 @@ static void checkFactoryResetButton() {
         ui.setCursorTopLeft(30, SCREEN_HEIGHT - 60, 2);
         ui.gfx()->print("Release to cancel");
     }
+    return false;
+}
+
+// Helper used while connecting/retrying WiFi at boot — keeps the reset
+// button responsive and refreshes the error screen if the user starts
+// holding the reset button and then lets go.
+static void wifiRetryWaitMs(unsigned long ms, const String& ssid) {
+    unsigned long t0 = millis();
+    while (millis() - t0 < ms) {
+        portal.checkSerial(config);
+        if (checkFactoryResetButton()) {
+            ui.showWifiError(ssid);
+        }
+        delay(50);
+    }
 }
 
 void loop() {
     // Always check for serial commands (RESET, config JSON)
     portal.checkSerial(config);
-    checkFactoryResetButton();
+    if (checkFactoryResetButton()) {
+        // Released early — restore the appropriate screen.
+        if (state == State::IDLE)             ui.showAmountEntry(enteredAmount, "NZD");
+        else if (state == State::SCREENSAVER) ui.showScreensaver();
+    }
 
     switch (state) {
 
     // --- Numpad ---
     case State::IDLE: {
         Key k = ui.pollTouch();
-        if (k != Key::NONE) handleKey(k);
+        if (k != Key::NONE) {
+            handleKey(k);
+            lastActivityAt = millis();
+        } else if (millis() - lastActivityAt > SCREENSAVER_TIMEOUT_MS) {
+            Serial.println("[POS] Idle — entering screensaver");
+            state = State::SCREENSAVER;
+            ui.showScreensaver();
+        }
+        break;
+    }
+
+    // --- Screensaver: static splash, tap to exit ---
+    case State::SCREENSAVER: {
+        if (ui.anyTouch()) {
+            Serial.println("[POS] Screensaver dismissed");
+            resetToIdle();
+        }
         break;
     }
 
@@ -504,6 +558,18 @@ void loop() {
 
         // Update countdown
         if (secsLeft >= 0) ui.updateTimer(secsLeft, refreshCount);
+
+        // NFC: detect card taps while QR is showing.
+        // For now we just log the UID + any NDEF URL; the Boltcard
+        // payment flow (resolve LNURLW + post bolt11) will hang off this.
+        {
+            String uid, url;
+            if (nfc.readCard(uid, url)) {
+                Serial.printf("[NFC] tap uid=%s url=%s\n",
+                              uid.c_str(),
+                              url.length() ? url.c_str() : "(no NDEF URL)");
+            }
+        }
 
         // Cancel on touch
         if (ui.anyTouch()) {

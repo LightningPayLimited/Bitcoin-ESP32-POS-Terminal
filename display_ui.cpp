@@ -1,6 +1,7 @@
 #include "display_ui.h"
 #include "config.h"
 #include "logo.h"
+#include "splash_image.h"
 #include "pos_fonts.h"
 #include <qrcode.h>
 
@@ -344,6 +345,27 @@ void DisplayUI::showPaid(uint64_t sats, float nzd) {
     }
 
     drawCenteredText("Tap to continue", cx, SCREEN_HEIGHT - 30, 2, COL_DIM, COL_BG);
+}
+
+void DisplayUI::showWifiError(const String& ssid) {
+    _screen = Screen::ERROR;
+    _gfx->fillScreen(COL_BG);
+    _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ERROR);
+    _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ERROR);
+
+    int cx = SCREEN_WIDTH / 2;
+    drawCenteredText("WiFi Failed", cx, 220, 5, COL_ERROR, COL_BG);
+    if (ssid.length() > 0) {
+        drawCenteredText("SSID: " + ssid, cx, 320, 2, COL_DIM, COL_BG);
+    }
+    drawCenteredText("Retrying...", cx, 400, 3, COL_FG, COL_BG);
+    drawCenteredText("Hold reset button", cx, 540, 2, COL_DIM, COL_BG);
+    drawCenteredText("to reconfigure WiFi", cx, 580, 2, COL_DIM, COL_BG);
+}
+
+void DisplayUI::showScreensaver() {
+    _screen = Screen::SCREENSAVER;
+    _gfx->draw16bitRGBBitmap(0, 0, SPLASH_RGB565, SPLASH_W, SPLASH_H);
 }
 
 void DisplayUI::showError(const String& message) {

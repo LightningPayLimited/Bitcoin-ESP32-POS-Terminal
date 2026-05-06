@@ -201,7 +201,12 @@ PaymentStatus StackedAPI::checkPayment(const String& reference) {
     ps.satAmount = get("satAmount") | (uint64_t)0;
     ps.nzdAmount = get("nzdAmount") | 0.0f;
     ps.paidDate  = get("paidDate") | "";
-    ps.isPaid    = (ps.paidDate.length() > 0 && ps.paidDate != "null");
+
+    // Stacked uses a top-level boolean `isPaid` on the poll response;
+    // older versions only set `tx.paidDate` when paid. Honour both.
+    bool isPaidFlag = result["isPaid"] | false;
+    ps.isPaid = isPaidFlag ||
+                (ps.paidDate.length() > 0 && ps.paidDate != "null");
 
     return ps;
 }
