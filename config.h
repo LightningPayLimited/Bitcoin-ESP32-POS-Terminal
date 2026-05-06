@@ -61,6 +61,12 @@
 #define COL_KEYPAD_FG  0xFFFF
 #define COL_HEADER_BG  0x1575
 #define COL_DIM        0x8410
+#define COL_BTC        0xFD20  // Bitcoin orange (~#F7931A)
+#define COL_BTC_RIM    0xC2A0  // darker rim for coin edge
+
+// --- Screensaver ---
+// Show the animated splash after this much inactivity on the numpad.
+#define SCREENSAVER_TIMEOUT_MS  60000
 
 // --- QR ---
 // Bolt11 Lightning invoices are ~300-600 chars alphanumeric.
@@ -78,6 +84,14 @@
 // If this is wrong for the JC4880P443, try 0, 22, or 36.
 #define FACTORY_RESET_PIN       35
 #define FACTORY_RESET_HOLD_MS   5000
+
+// --- NFC reader (PN532 on header I2C bus, separate from touch) ---
+#define NFC_SDA_PIN  32
+#define NFC_SCL_PIN  28
+// IRQ + RST aren't wired on the 4-pin module. Adafruit's lib needs
+// concrete pin numbers though — pick any free pad. These won't be driven.
+#define NFC_IRQ_PIN  36
+#define NFC_RST_PIN  37
 
 // --- Thermal printer (CSN-A2 over TTL UART) ---
 // Wire ESP32 TX -> printer RX (yellow), printer TX -> ESP32 RX (green).
