@@ -94,8 +94,12 @@
 #define NFC_RST_PIN  37
 
 // --- Thermal printer (CSN-A2 over TTL UART) ---
-// Wire ESP32 TX -> printer RX (yellow), printer TX -> ESP32 RX (green).
+// Wire ESP32 TX -> printer RX (yellow), printer TX -> ESP32 RX (green),
+// printer RTS -> ESP32 RTS pin (used as a CTS input — the printer pulls
+// this line high when its buffer is full so we don't overrun it during
+// big bitmap dumps).
 // Printer needs its own 5-9V / 2A supply with shared GND.
 #define PRINTER_TX_PIN  33   // ESP32 -> printer (printer's yellow wire)
 #define PRINTER_RX_PIN  31   // printer -> ESP32 (printer's green wire)
+#define PRINTER_RTS_PIN 30   // printer RTS -> ESP32 (acts as CTS input)
 #define PRINTER_BAUD    9600
