@@ -221,13 +221,17 @@ void DisplayUI::showSetupInfo() {
 }
 
 void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
+    // When we're already on this screen and just changing the amount, skip
+    // the full repaint — the header + keypad don't change, and the screen-
+    // wide fillScreen() is what causes the visible black flash on every key.
+    const bool alreadyHere = (_screen == Screen::AMOUNT_ENTRY);
     _screen = Screen::AMOUNT_ENTRY;
-    _gfx->fillScreen(COL_BG);
-    drawHeader("Stacked: Pay with Bitcoin");
+    if (!alreadyHere) {
+        _gfx->fillScreen(COL_BG);
+        drawHeader("Stacked: Pay with Bitcoin");
+    }
 
-
-
-    // Amount box
+    // Amount box (redraws the box fill → wipes the previous amount text)
     _gfx->fillRoundRect(15, AMT_BOX_Y, SCREEN_WIDTH - 30, AMT_BOX_H, 8, COL_KEYPAD_BG);
     _gfx->drawRoundRect(15, AMT_BOX_Y, SCREEN_WIDTH - 30, AMT_BOX_H, 8, COL_ACCENT);
 
@@ -250,20 +254,22 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
     _gfx->setCursor(SCREEN_WIDTH - 30 - w - x1, boxCy - h / 2 - y1);
     _gfx->print(right);
 
-    // Keypad
-    for (int r = 0; r < KP_ROWS; r++) {
-        for (int c = 0; c < KP_COLS; c++) {
-            const char* lbl = KP[r][c];
-            if (strlen(lbl) == 0) continue;
+    // Keypad — static between keystrokes, only paint on first entry.
+    if (!alreadyHere) {
+        for (int r = 0; r < KP_ROWS; r++) {
+            for (int c = 0; c < KP_COLS; c++) {
+                const char* lbl = KP[r][c];
+                if (strlen(lbl) == 0) continue;
 
-            int x = KP_X0 + c * (KP_BW + KP_GAP);
-            int y = KP_Y0 + r * (KP_BH + KP_GAP);
-            uint16_t bg = COL_KEYPAD_BG, fg = COL_KEYPAD_FG;
+                int x = KP_X0 + c * (KP_BW + KP_GAP);
+                int y = KP_Y0 + r * (KP_BH + KP_GAP);
+                uint16_t bg = COL_KEYPAD_BG, fg = COL_KEYPAD_FG;
 
-            if (strcmp(lbl, "$") == 0) { bg = COL_ACCENT; fg = COL_BG; }
-            else if (strcmp(lbl, "<") == 0 || strcmp(lbl, "C") == 0) { bg = 0x3186; }
+                if (strcmp(lbl, "$") == 0) { bg = COL_ACCENT; fg = COL_BG; }
+                else if (strcmp(lbl, "<") == 0 || strcmp(lbl, "C") == 0) { bg = 0x3186; }
 
-            drawButton(x, y, KP_BW, KP_BH, lbl, bg, fg, 3);
+                drawButton(x, y, KP_BW, KP_BH, lbl, bg, fg, 3);
+            }
         }
     }
 }
