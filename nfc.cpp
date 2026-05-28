@@ -1,50 +1,40 @@
 #include "nfc.h"
 #include "config.h"
-#include <Wire.h>
-#include <Adafruit_PN532.h>
+#include <PN532_SWI2C.h>
+#include <PN532.h>
 
-// PN532 (RDM8800) on Wire1 — separate I2C bus from the touch controller.
-static Adafruit_PN532* pn532 = nullptr;
+// PN532 over a bit-banged software I2C bus. The ESP32-P4's hardware i2c-ng
+// driver can't ride the chip's clock stretching (floods ESP_ERR_INVALID_STATE
+// on SAMConfig / card polling), so we drive SDA/SCL in software and wait out
+// the stretch. Same two header pins as before: SDA=NFC_SDA_PIN, SCL=NFC_SCL_PIN.
+static PN532_SWI2C* pn532i2c = nullptr;
+static PN532*       pn532     = nullptr;
 
 NFC nfc;
 
-static void i2cScan(TwoWire& bus) {
-    Serial.print("[I2C] devices: ");
-    int count = 0;
-    for (uint8_t addr = 1; addr < 127; addr++) {
-        bus.beginTransmission(addr);
-        if (bus.endTransmission() == 0) {
-            Serial.printf("0x%02X ", addr);
-            count++;
-        }
-    }
-    Serial.printf(" (%d total)\n", count);
-}
-
 bool NFC::begin() {
-    Wire1.end();
-    if (!Wire1.begin(NFC_SDA_PIN, NFC_SCL_PIN, 100000)) {
-        Serial.printf("[NFC] Wire1.begin(%d,%d) failed\n",
-                      NFC_SDA_PIN, NFC_SCL_PIN);
-        return false;
-    }
-    delay(20);
+    // Resting line levels before we start driving the bus. Both should read
+    // HIGH on a healthy idle bus; a line stuck at 0 means it's held low
+    // externally (e.g. a dead/under-powered module).
+    pinMode(NFC_SDA_PIN, INPUT_PULLUP);
+    pinMode(NFC_SCL_PIN, INPUT_PULLUP);
+    delay(5);
+    Serial.printf("[NFC] Idle line levels (INPUT_PULLUP): SDA(GPIO%d)=%d SCL(GPIO%d)=%d  (1=high/healthy, 0=held low)\n",
+                  NFC_SDA_PIN, digitalRead(NFC_SDA_PIN),
+                  NFC_SCL_PIN, digitalRead(NFC_SCL_PIN));
 
-    Serial.printf("[NFC] Scanning Wire1 (SDA=%d SCL=%d): ",
-                  NFC_SDA_PIN, NFC_SCL_PIN);
-    i2cScan(Wire1);
-
-    pn532 = new Adafruit_PN532(NFC_IRQ_PIN, NFC_RST_PIN, &Wire1);
+    pn532i2c = new PN532_SWI2C(NFC_SDA_PIN, NFC_SCL_PIN);
+    pn532    = new PN532(*pn532i2c);
     pn532->begin();
 
     uint32_t ver = pn532->getFirmwareVersion();
     if (!ver) {
         Serial.println("[NFC] PN532 not responding to firmware-version query");
-        Serial.println("[NFC] Check: module mode jumpers set to I2C? Power LED on?");
+        Serial.println("[NFC] Check: DIP switches in I2C mode (1=ON,2=OFF)? Power LED on?");
         _ready = false;
         return false;
     }
-    Serial.printf("[NFC] PN532 chip=0x%02X fw=%d.%d on SDA=%d SCL=%d\n",
+    Serial.printf("[NFC] PN532 chip=0x%02X fw=%d.%d via bit-bang I2C (SDA=%d SCL=%d)\n",
                   (uint8_t)((ver >> 24) & 0xFF),
                   (uint8_t)((ver >> 16) & 0xFF),
                   (uint8_t)((ver >> 8)  & 0xFF),
@@ -159,42 +149,68 @@ static String parseRawNdef(const uint8_t* msg, size_t len) {
 // activated.
 static String readType4Ndef() {
     if (!pn532) return String();
-    uint8_t resp[256];
+    // NOTE: respLen is the *input* buffer size for inDataExchange. It's a
+    // uint8_t, so the buffer must be <=255 — resp[256] would overflow
+    // sizeof() to 0 and make every exchange fail with NO_SPACE.
+    uint8_t resp[255];
     uint8_t respLen;
 
-    // 1) SELECT NDEF Application
+    // 1) SELECT NDEF Tag Application
     static uint8_t selectAid[] = {
         0x00, 0xA4, 0x04, 0x00, 0x07,
         0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01, 0x00
     };
     respLen = sizeof(resp);
-    if (!pn532->inDataExchange(selectAid, sizeof(selectAid), resp, &respLen)) return String();
-    if (respLen < 2 || resp[respLen-2] != 0x90 || resp[respLen-1] != 0x00) return String();
+    if (!pn532->inDataExchange(selectAid, sizeof(selectAid), resp, &respLen)) {
+        Serial.println("[NFC] Type-4: SELECT app — exchange failed (not ISO-DEP?)");
+        return String();
+    }
+    if (respLen < 2 || resp[respLen-2] != 0x90 || resp[respLen-1] != 0x00) {
+        Serial.printf("[NFC] Type-4: SELECT app bad SW (%d bytes)\n", respLen);
+        return String();
+    }
 
     // 2) SELECT NDEF file (E1 04)
     static uint8_t selectNdef[] = { 0x00, 0xA4, 0x00, 0x0C, 0x02, 0xE1, 0x04 };
     respLen = sizeof(resp);
-    if (!pn532->inDataExchange(selectNdef, sizeof(selectNdef), resp, &respLen)) return String();
-    if (respLen < 2 || resp[respLen-2] != 0x90 || resp[respLen-1] != 0x00) return String();
+    if (!pn532->inDataExchange(selectNdef, sizeof(selectNdef), resp, &respLen)) {
+        Serial.println("[NFC] Type-4: SELECT NDEF file — exchange failed");
+        return String();
+    }
+    if (respLen < 2 || resp[respLen-2] != 0x90 || resp[respLen-1] != 0x00) {
+        Serial.printf("[NFC] Type-4: SELECT NDEF file bad SW (%d bytes)\n", respLen);
+        return String();
+    }
 
-    // 3) READ BINARY length (2 bytes)
+    // 3) READ BINARY the 2-byte NLEN (NDEF message length)
     static uint8_t readLen[] = { 0x00, 0xB0, 0x00, 0x00, 0x02 };
     respLen = sizeof(resp);
-    if (!pn532->inDataExchange(readLen, sizeof(readLen), resp, &respLen)) return String();
-    if (respLen < 4 || resp[respLen-2] != 0x90 || resp[respLen-1] != 0x00) return String();
+    if (!pn532->inDataExchange(readLen, sizeof(readLen), resp, &respLen)) {
+        Serial.println("[NFC] Type-4: READ NLEN — exchange failed");
+        return String();
+    }
+    if (respLen < 4 || resp[respLen-2] != 0x90 || resp[respLen-1] != 0x00) {
+        Serial.printf("[NFC] Type-4: READ NLEN bad SW (%d bytes)\n", respLen);
+        return String();
+    }
     uint16_t ndefLen = (resp[0] << 8) | resp[1];
-    if (ndefLen == 0 || ndefLen > 250) return String();
+    Serial.printf("[NFC] Type-4: NDEF message length = %u\n", ndefLen);
+    if (ndefLen == 0 || ndefLen > 240) return String();   // 240 leaves room for SW
 
-    // 4) READ BINARY body
-    uint8_t readBody[] = {
-        0x00, 0xB0, 0x00, 0x02, (uint8_t)(ndefLen > 250 ? 250 : ndefLen)
-    };
+    // 4) READ BINARY the NDEF message (offset 2, past the NLEN field)
+    uint8_t readBody[] = { 0x00, 0xB0, 0x00, 0x02, (uint8_t)ndefLen };
     respLen = sizeof(resp);
-    if (!pn532->inDataExchange(readBody, sizeof(readBody), resp, &respLen)) return String();
-    if (respLen < 2 || resp[respLen-2] != 0x90 || resp[respLen-1] != 0x00) return String();
+    if (!pn532->inDataExchange(readBody, sizeof(readBody), resp, &respLen)) {
+        Serial.println("[NFC] Type-4: READ body — exchange failed");
+        return String();
+    }
+    if (respLen < 2 || resp[respLen-2] != 0x90 || resp[respLen-1] != 0x00) {
+        Serial.printf("[NFC] Type-4: READ body bad SW (%d bytes)\n", respLen);
+        return String();
+    }
 
     Serial.printf("[NFC] Type-4 NDEF (%d bytes):", respLen - 2);
-    for (int i = 0; i < respLen - 2 && i < 64; i++) Serial.printf(" %02X", resp[i]);
+    for (int i = 0; i < respLen - 2 && i < 80; i++) Serial.printf(" %02X", resp[i]);
     Serial.println();
 
     return parseRawNdef(resp, respLen - 2);
@@ -218,25 +234,28 @@ bool NFC::readCard(String& outUid, String& outNdefUrl) {
     outUid = String(hex);
     outNdefUrl = "";
 
-    // Try Type-2 first (NTAG21x / Mifare Ultralight)
-    uint8_t buf[64];
-    size_t got = 0;
-    bool t2Ok = false;
-    for (uint8_t page = 4; page <= 12 && got + 4 <= sizeof(buf); page += 4) {
-        uint8_t pageBuf[16];
-        if (!pn532->mifareultralight_ReadPage(page, pageBuf)) break;
-        t2Ok = true;
-        memcpy(buf + got, pageBuf, 16);
-        got += 16;
-        bool terminator = false;
-        for (size_t k = 0; k < got; k++) if (buf[k] == 0xFE) { terminator = true; break; }
-        if (terminator) break;
-    }
-    if (t2Ok && got > 0) outNdefUrl = parseType2Ndef(buf, got);
+    // Try Type-4 first (NTAG424 / Boltcard — these run in privacy mode with a
+    // random UID each tap, and their URL is only reachable over ISO-DEP). Done
+    // immediately after activation so a failed Type-2 read can't deselect the
+    // card first.
+    outNdefUrl = readType4Ndef();
 
-    // If Type-2 didn't find a URL (could be NTAG424), try Type-4
+    // Fall back to Type-2 (NTAG21x / Mifare Ultralight) if no Type-4 URL.
     if (outNdefUrl.length() == 0) {
-        outNdefUrl = readType4Ndef();
+        uint8_t buf[64];
+        size_t got = 0;
+        bool t2Ok = false;
+        for (uint8_t page = 4; page <= 12 && got + 4 <= sizeof(buf); page += 4) {
+            uint8_t pageBuf[16];
+            if (!pn532->mifareultralight_ReadPage(page, pageBuf)) break;
+            t2Ok = true;
+            memcpy(buf + got, pageBuf, 16);
+            got += 16;
+            bool terminator = false;
+            for (size_t k = 0; k < got; k++) if (buf[k] == 0xFE) { terminator = true; break; }
+            if (terminator) break;
+        }
+        if (t2Ok && got > 0) outNdefUrl = parseType2Ndef(buf, got);
     }
     return true;
 }

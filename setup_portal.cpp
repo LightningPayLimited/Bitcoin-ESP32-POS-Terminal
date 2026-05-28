@@ -2,6 +2,7 @@
 #include "config.h"
 #include "display_ui.h"
 #include "printer.h"
+#include "nfc.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <DNSServer.h>
@@ -270,6 +271,17 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
         // Check serial too
         if (checkSerial(store)) {
             saved = true;
+        }
+
+        // NFC card test — tap a card during setup to verify the reader.
+        // Logs the UID and any NDEF URL to serial.
+        {
+            String uid, url;
+            if (nfc.readCard(uid, url)) {
+                Serial.printf("[NFC] tap uid=%s url=%s\n",
+                              uid.c_str(),
+                              url.length() ? url.c_str() : "(no NDEF URL)");
+            }
         }
 
         // On-device Test Print button — fires a fake-receipt print so the
