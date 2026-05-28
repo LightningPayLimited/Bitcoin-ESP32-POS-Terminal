@@ -31,6 +31,7 @@
 #include "stacked_api.h"
 #include "printer.h"
 #include "nfc.h"
+#include "battery.h"
 
 // ================================================================
 // State
@@ -145,6 +146,53 @@ void setup() {
 
     // I2C bus is now up — initialise NFC reader on the same bus.
     nfc.begin();
+
+    // Battery monitoring — ADC + voltage divider on BATTERY_ADC_PIN.
+    battery.begin();
+    Serial.printf("[BAT] %d mV (%d%%)\n", battery.millivolts(), battery.percent());
+
+    // One-shot I2C scan — useful for identifying anything else on the bus.
+    // Note: this board's PMIC is the plain (non-I2C) IP5306, so battery
+    // state is read from a 68K/100K divider on GPIO53, not from I2C.
+    Serial.println("[I2C] Scanning bus for devices...");
+    for (uint8_t addr = 1; addr < 127; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            const char* hint = "";
+            switch (addr) {
+                case 0x14: case 0x5D: hint = " (GT911 touch)"; break;
+                case 0x24: case 0x48: hint = " (PN532 NFC?)"; break;
+                case 0x75:            hint = " (IP5306-I2C battery!)"; break;
+            }
+            Serial.printf("[I2C]   0x%02X%s\n", addr, hint);
+        }
+    }
+    Serial.println("[I2C] Scan complete.");
+
+    // Dump a register range from anything unidentified so we can ID the chip.
+    // 0x18 isn't a known device on this board — common candidates at 0x18:
+    // MCP9808 (temp), LIS3DH/BMA accelerometer, MCP23018 GPIO expander,
+    // or a knock-off IP5306-style PMIC. The first register usually gives
+    // away the device class.
+    auto dumpI2C = [](uint8_t addr) {
+        Serial.printf("[I2C] Register dump @ 0x%02X:\n", addr);
+        for (uint8_t reg = 0x00; reg < 0x20; reg++) {
+            Wire.beginTransmission(addr);
+            Wire.write(reg);
+            if (Wire.endTransmission(false) != 0) {
+                Serial.printf("  reg 0x%02X: NACK\n", reg);
+                continue;
+            }
+            Wire.requestFrom((int)addr, 1);
+            if (Wire.available()) {
+                Serial.printf("  reg 0x%02X = 0x%02X\n", reg, Wire.read());
+            }
+        }
+    };
+    dumpI2C(0x18);
+    // Also probe 0x75 explicitly in case the empty-write scan missed it.
+    Serial.println("[I2C] Probing 0x75 (IP5306-I2C) directly...");
+    dumpI2C(0x75);
 
     ui.showSplash();
     delay(1000);
@@ -412,6 +460,7 @@ static void wifiRetryWaitMs(unsigned long ms, const String& ssid) {
 void loop() {
     // Always check for serial commands (RESET, config JSON)
     portal.checkSerial(config);
+    ui.tickBattery();
     if (checkFactoryResetButton()) {
         // Released early — restore the appropriate screen.
         if (state == State::IDLE)             ui.showAmountEntry(enteredAmount, "NZD");

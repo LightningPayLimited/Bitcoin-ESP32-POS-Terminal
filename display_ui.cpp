@@ -3,6 +3,7 @@
 #include "logo.h"
 #include "splash_image.h"
 #include "pos_fonts.h"
+#include "battery.h"
 #include <qrcode.h>
 
 // ============================================================
@@ -24,6 +25,14 @@
 #define TP_Y       700
 #define TP_W       360
 #define TP_H       70
+
+// Battery icon — sits in the top-right corner across all screens.
+#define BAT_BODY_W 34
+#define BAT_BODY_H 16
+#define BAT_NUB_W  3
+#define BAT_NUB_H  6
+#define BAT_X      (SCREEN_WIDTH - BAT_BODY_W - BAT_NUB_W - 12)
+#define BAT_Y      14
 
 static const char* KP[KP_ROWS][KP_COLS] = {
     {"1", "2", "3", "<"},
@@ -179,6 +188,7 @@ void DisplayUI::drawButton(int x, int y, int w, int h,
 // ============================================================
 void DisplayUI::showSplash(const String& merchantName) {
     _screen = Screen::SPLASH;
+    _iconHidden = true;  // splash is full-bleed; no battery overlay
     _gfx->fillScreen(COL_BG);
     _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ACCENT);
     _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ACCENT);
@@ -198,6 +208,7 @@ void DisplayUI::showSplash(const String& merchantName) {
 
 void DisplayUI::showSetupInfo() {
     _screen = Screen::SETUP_INFO;
+    _iconHidden = true;
     _gfx->fillScreen(COL_BG);
     _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ACCENT);
     _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ACCENT);
@@ -223,7 +234,10 @@ void DisplayUI::showSetupInfo() {
 void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
     _screen = Screen::AMOUNT_ENTRY;
     _gfx->fillScreen(COL_BG);
-    drawHeader("Stacked: Pay with Bitcoin");
+    drawHeader("Pay with Bitcoin");
+    _iconBg = COL_HEADER_BG;
+    _iconHidden = false;
+    drawBatteryIcon();
 
 
 
@@ -272,6 +286,9 @@ void DisplayUI::showLoading(const String& message) {
     _screen = Screen::LOADING;
     _gfx->fillScreen(COL_BG);
     drawHeader("Stacked");
+    _iconBg = COL_HEADER_BG;
+    _iconHidden = false;
+    drawBatteryIcon();
     drawCenteredText(message, SCREEN_WIDTH / 2, 380, 3, COL_FG, COL_BG);
     drawCenteredText(". . .", SCREEN_WIDTH / 2, 450, 3, COL_ACCENT, COL_BG);
 }
@@ -280,6 +297,9 @@ void DisplayUI::showQR(const String& bolt11, uint64_t sats, float nzd,
                        int secsLeft, int refreshCount) {
     _screen = Screen::QR_DISPLAY;
     _gfx->fillScreen(COL_BG);
+    _iconBg = COL_BG;
+    _iconHidden = false;
+    drawBatteryIcon();
 
     // Amount at top
     if (nzd > 0) {
@@ -323,9 +343,76 @@ void DisplayUI::updateTimer(int secsLeft, int refreshCount) {
     }
 }
 
+void DisplayUI::drawBatteryIcon() {
+    if (_iconHidden || !battery.enabled()) return;
+
+    int x = BAT_X, y = BAT_Y;
+
+    // Always wipe the whole footprint first so transitions (charging on/off,
+    // battery removed, percent changed) don't leave artefacts behind.
+    _gfx->fillRect(x, y, BAT_BODY_W + BAT_NUB_W, BAT_BODY_H, _iconBg);
+
+    if (!battery.present()) {
+        _iconLastPercent = -1;
+        _iconLastCharging = false;
+        return;  // No battery -> hide icon entirely.
+    }
+
+    int  p   = battery.percent();
+    bool chg = battery.charging();
+    _iconLastPercent  = p;
+    _iconLastCharging = chg;
+
+    // Outline + nub
+    _gfx->drawRoundRect(x, y, BAT_BODY_W, BAT_BODY_H, 2, COL_FG);
+    _gfx->fillRect(x + BAT_BODY_W, y + (BAT_BODY_H - BAT_NUB_H) / 2,
+                   BAT_NUB_W, BAT_NUB_H, COL_FG);
+
+    uint16_t fillCol = chg      ? COL_SUCCESS
+                     : (p < 20) ? COL_ERROR
+                     : (p < 50) ? COL_BTC
+                                : COL_SUCCESS;
+
+    int innerW = BAT_BODY_W - 4;
+    int fillW  = innerW * p / 100;
+    if (fillW > 0)
+        _gfx->fillRect(x + 2, y + 2, fillW, BAT_BODY_H - 4, fillCol);
+
+    if (chg) {
+        // Lightning bolt overlay — two filled triangles forming a Z, drawn
+        // in dark on top of the bright fill so it stays readable at any %.
+        int innerH = BAT_BODY_H - 4;
+        int cx     = x + 2 + innerW / 2;
+        int cy     = y + 2 + innerH / 2;
+        int bw     = 4;   // half-width of the bolt
+        int bh     = innerH / 2;
+        // Upper-right wedge (top-right point down to centre)
+        _gfx->fillTriangle(cx + bw,     cy - bh,
+                           cx + bw,     cy,
+                           cx - bw + 1, cy,
+                           COL_BG);
+        // Lower-left wedge (bottom-left point up to centre)
+        _gfx->fillTriangle(cx - bw,     cy + bh,
+                           cx - bw,     cy,
+                           cx + bw - 1, cy,
+                           COL_BG);
+    }
+}
+
+void DisplayUI::tickBattery() {
+    battery.update();
+    if (_iconHidden || !battery.enabled()) return;
+    int p = battery.present() ? battery.percent() : -1;
+    bool chg = battery.charging();
+    if (p != _iconLastPercent || chg != _iconLastCharging) drawBatteryIcon();
+}
+
 void DisplayUI::showPaid(uint64_t sats, float nzd) {
     _screen = Screen::PAID;
     _gfx->fillScreen(COL_BG);
+    _iconBg = COL_BG;
+    _iconHidden = false;
+    drawBatteryIcon();
 
     int cx = SCREEN_WIDTH / 2;
 
@@ -349,6 +436,7 @@ void DisplayUI::showPaid(uint64_t sats, float nzd) {
 
 void DisplayUI::showWifiError(const String& ssid) {
     _screen = Screen::ERROR;
+    _iconHidden = true;  // top stripe is right where the icon would sit
     _gfx->fillScreen(COL_BG);
     _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ERROR);
     _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ERROR);
@@ -365,12 +453,16 @@ void DisplayUI::showWifiError(const String& ssid) {
 
 void DisplayUI::showScreensaver() {
     _screen = Screen::SCREENSAVER;
+    _iconHidden = true;
     _gfx->draw16bitRGBBitmap(0, 0, SPLASH_RGB565, SPLASH_W, SPLASH_H);
 }
 
 void DisplayUI::showError(const String& message) {
     _screen = Screen::ERROR;
     _gfx->fillScreen(COL_BG);
+    _iconBg = COL_BG;
+    _iconHidden = false;
+    drawBatteryIcon();
 
     int cx = SCREEN_WIDTH / 2;
     int cy = 230;

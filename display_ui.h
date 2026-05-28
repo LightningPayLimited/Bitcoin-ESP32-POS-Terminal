@@ -35,6 +35,14 @@ public:
 
     void updateTimer(int secsLeft, int refreshCount);
 
+    /// Sample the battery and repaint the corner icon if the percentage
+    /// changed. Cheap to call every loop iteration.
+    void tickBattery();
+
+    /// Force-redraw the battery icon now (e.g. after a screen transition
+    /// painted over its corner).
+    void drawBatteryIcon();
+
     Key  pollTouch();
     bool anyTouch();
 
@@ -56,6 +64,14 @@ private:
     Screen _screen = Screen::SPLASH;
     bool   _wasTouched = false;
     unsigned long _lastTouch = 0;
+
+    // Background colour of whatever the battery icon overlays on the
+    // current screen — set by each show*() call so tickBattery() can
+    // repaint cleanly without flickering.
+    uint16_t _iconBg = 0x0000;
+    int      _iconLastPercent = -2;     // -2 = nothing drawn yet
+    bool     _iconLastCharging = false;
+    bool     _iconHidden = true;
 
     void drawHeader(const String& text);
     void drawButton(int x, int y, int w, int h, const char* label, uint16_t bg, uint16_t fg, int textSize);

@@ -93,6 +93,16 @@
 #define NFC_IRQ_PIN  36
 #define NFC_RST_PIN  37
 
+// --- Battery monitor ---
+// JC4880P443 schematic: BAT+ → R52 (68K) → midpoint → R57 (100K) → GND,
+// midpoint → R55 (0Ω jumper) → GPIO53. So the ADC sees BAT+ × 100/168.
+// Set BATTERY_ADC_PIN to -1 to disable monitoring (icon hidden).
+#define BATTERY_ADC_PIN              53
+#define BATTERY_DIVIDER_RATIO        1.68f   // (R52 + R57) / R57 = 168/100
+#define BATTERY_FULL_MV              4200    // Li-ion fully charged
+#define BATTERY_EMPTY_MV             3300    // Li-ion cutoff -> 0%
+#define BATTERY_SAMPLE_INTERVAL_MS   2000
+
 // --- Thermal printer (CSN-A2 over TTL UART) ---
 // Wire ESP32 TX -> printer RX (yellow), printer TX -> ESP32 RX (green).
 // Printer needs its own 5-9V / 2A supply with shared GND.
