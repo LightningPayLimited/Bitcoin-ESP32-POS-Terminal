@@ -31,6 +31,7 @@
 #include "stacked_api.h"
 #include "printer.h"
 #include "nfc.h"
+#include "boltcard.h"
 
 // ================================================================
 // State
@@ -61,6 +62,7 @@ static MerchantInvoice activeInvoice;
 static unsigned long   invoiceCreatedAt = 0;
 static unsigned long   lastPollAt = 0;
 static int             refreshCount = 0;
+static bool            boltcardSubmitted = false;  // invoice handed to a Boltcard
 static unsigned long   stateEnteredAt = 0;
 static unsigned long   lastActivityAt = 0;
 
@@ -81,6 +83,7 @@ void resetToIdle() {
     enteredAmount = "";
     activeNzd = 0;
     refreshCount = 0;
+    boltcardSubmitted = false;
     activeInvoice = {};
     lastActivityAt = millis();
     ui.showAmountEntry(enteredAmount, "NZD");
@@ -471,6 +474,7 @@ void loop() {
         invoiceCreatedAt = millis();
         lastPollAt = 0;
         refreshCount = 0;
+        boltcardSubmitted = false;
         state = State::AWAITING_PAYMENT;
 
         ui.showQR(activeInvoice.paymentRequest,
@@ -490,8 +494,11 @@ void loop() {
         unsigned long elapsed = now - invoiceCreatedAt;
         int secsLeft = INVOICE_EXPIRY_SEC - (int)(elapsed / 1000);
 
-        // Auto-refresh before expiry
-        if (elapsed >= (unsigned long)(INVOICE_EXPIRY_SEC * 1000 - INVOICE_REFRESH_BUFFER_MS)) {
+        // Auto-refresh before expiry. Suspended once a Boltcard has accepted
+        // the invoice — the wallet is paying this exact bolt11, so we must not
+        // swap it out from under the in-flight withdrawal.
+        if (!boltcardSubmitted &&
+            elapsed >= (unsigned long)(INVOICE_EXPIRY_SEC * 1000 - INVOICE_REFRESH_BUFFER_MS)) {
             if (refreshCount >= MAX_INVOICE_REFRESHES) {
                 state = State::ERROR;
                 stateEnteredAt = millis();
@@ -556,18 +563,35 @@ void loop() {
             }
         }
 
-        // Update countdown
-        if (secsLeft >= 0) ui.updateTimer(secsLeft, refreshCount);
+        // Update countdown (frozen once a Boltcard tap is being settled).
+        if (!boltcardSubmitted && secsLeft >= 0) ui.updateTimer(secsLeft, refreshCount);
 
-        // NFC: detect card taps while QR is showing.
-        // For now we just log the UID + any NDEF URL; the Boltcard
-        // payment flow (resolve LNURLW + post bolt11) will hang off this.
-        {
+        // NFC: Boltcard tap → resolve its LNURLW and submit the active invoice.
+        // On success the wallet settles this bolt11 and the poll above flips us
+        // to PAID. Only submit once per invoice.
+        if (!boltcardSubmitted) {
             String uid, url;
             if (nfc.readCard(uid, url)) {
                 Serial.printf("[NFC] tap uid=%s url=%s\n",
                               uid.c_str(),
                               url.length() ? url.c_str() : "(no NDEF URL)");
+                if (url.length()) {
+                    ui.showLoading("Card detected");
+                    BoltcardResult br = boltcardPay(url, activeInvoice.paymentRequest);
+                    if (br.ok) {
+                        boltcardSubmitted = true;
+                        lastPollAt = 0;   // poll for settlement immediately
+                        ui.showLoading("Awaiting payment");
+                    } else {
+                        Serial.printf("[POS] Boltcard declined: %s\n", br.error.c_str());
+                        ui.showError(br.error.length() ? br.error : "Card declined");
+                        delay(1800);
+                        ui.showQR(activeInvoice.paymentRequest,
+                                  activeInvoice.satAmount,
+                                  activeInvoice.nzdAmount > 0 ? activeInvoice.nzdAmount : activeNzd,
+                                  INVOICE_EXPIRY_SEC, refreshCount);
+                    }
+                }
             }
         }
 

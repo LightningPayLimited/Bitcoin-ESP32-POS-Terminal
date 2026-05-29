@@ -30,6 +30,10 @@ public:
     void showError(const String& message);
     void showWifiError(const String& ssid);
 
+    /// Show the last NFC tap (UID + NDEF URL) in a diagnostic band on the
+    /// setup screen, so bench NFC testing needs no serial monitor.
+    void showNfcTap(const String& uid, const String& url, int count);
+
     /// Paint the splash screensaver bitmap. Tap exits.
     void showScreensaver();
 

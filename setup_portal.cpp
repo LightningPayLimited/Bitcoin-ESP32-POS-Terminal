@@ -274,13 +274,17 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
         }
 
         // NFC card test — tap a card during setup to verify the reader.
-        // Logs the UID and any NDEF URL to serial.
+        // Logs to serial AND shows the UID on-screen so bench NFC diagnostics
+        // need no serial monitor.
         {
             String uid, url;
             if (nfc.readCard(uid, url)) {
+                static int nfcTapCount = 0;
+                nfcTapCount++;
                 Serial.printf("[NFC] tap uid=%s url=%s\n",
                               uid.c_str(),
                               url.length() ? url.c_str() : "(no NDEF URL)");
+                ui.showNfcTap(uid, url, nfcTapCount);
             }
         }
 

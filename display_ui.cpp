@@ -210,6 +210,9 @@ void DisplayUI::showSetupInfo() {
     drawCenteredText("Then open browser to:", SCREEN_WIDTH / 2, 400, 2, COL_FG, COL_BG);
     drawCenteredText(SETUP_AP_IP,             SCREEN_WIDTH / 2, 460, 3, COL_ACCENT, COL_BG);
 
+    // NFC diagnostic band (overwritten by showNfcTap on each card tap).
+    drawCenteredText("Tap NFC card to test", SCREEN_WIDTH / 2, 537, 2, COL_DIM, COL_BG);
+
     drawCenteredText("Enter WiFi details",       SCREEN_WIDTH / 2, 600, 2, COL_DIM, COL_BG);
     drawCenteredText("and Stacked API key",      SCREEN_WIDTH / 2, 640, 2, COL_DIM, COL_BG);
 
@@ -218,6 +221,27 @@ void DisplayUI::showSetupInfo() {
     _gfx->drawRoundRect(TP_X, TP_Y, TP_W, TP_H, 10, COL_ACCENT);
     drawCenteredText("Test Print", SCREEN_WIDTH / 2, TP_Y + TP_H / 2,
                      3, COL_ACCENT, COL_KEYPAD_BG);
+}
+
+// Diagnostic readout for NFC bench testing: fills the band between the setup
+// screen's browser-IP line and the instructions with the last tap's UID (and
+// a truncated NDEF URL), so a reader can be tested without a serial monitor.
+void DisplayUI::showNfcTap(const String& uid, const String& url, int count) {
+    const int top = 488, h = 100;
+    _gfx->fillRect(0, top, SCREEN_WIDTH, h, COL_BG);
+
+    char hdr[24];
+    snprintf(hdr, sizeof(hdr), "NFC tap #%d", count);
+    drawCenteredText(hdr, SCREEN_WIDTH / 2, top + 14, 2, COL_DIM, COL_BG);
+    drawCenteredText(uid.length() ? uid : "----",
+                     SCREEN_WIDTH / 2, top + 50, 3, COL_ACCENT, COL_BG);
+
+    if (url.length()) {
+        String u = url.length() > 34 ? url.substring(0, 33) + "..." : url;
+        drawCenteredText(u, SCREEN_WIDTH / 2, top + 84, 1, COL_FG, COL_BG);
+    } else {
+        drawCenteredText("(no NDEF URL)", SCREEN_WIDTH / 2, top + 84, 1, COL_DIM, COL_BG);
+    }
 }
 
 void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
