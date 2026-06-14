@@ -7,8 +7,26 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <ArduinoJson.h>
+#include <esp_random.h>
 
 extern DisplayUI ui;
+
+// ================================================================
+// AP SSID — base name plus a random 4-char base64 suffix so several
+// devices being set up simultaneously advertise distinct networks.
+// ================================================================
+String SetupPortal::apSSID() {
+    static String ssid;
+    if (ssid.length() == 0) {
+        static const char b64[] =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        ssid = SETUP_AP_SSID "-";
+        for (int i = 0; i < 4; i++) {
+            ssid += b64[esp_random() & 0x3F];
+        }
+    }
+    return ssid;
+}
 
 // ================================================================
 // Captive portal HTML — self-contained setup form
@@ -54,6 +72,12 @@ static const char SETUP_HTML[] PROGMEM = R"rawhtml(
   <p class="sub">Configure your Bitcoin point of sale terminal</p>
 
   <form method="POST" action="/save" id="f">
+    <label>Payment Provider</label>
+    <select name="provider" id="provider">
+      <option value="stacked" selected>Stacked</option>
+      <option value="btcpay">BTCPayServer</option>
+    </select>
+
     <label>WiFi Network</label>
     <div class="row">
       <select name="ssid" id="ssid"><option value="">Scanning…</option></select>
@@ -65,9 +89,31 @@ static const char SETUP_HTML[] PROGMEM = R"rawhtml(
     <label>WiFi Password</label>
     <input name="pass" type="password" placeholder="WiFi password">
 
-    <label>Stacked API Key</label>
-    <input name="apiKey" required placeholder="Paste your merchant API key">
-    <p class="hint">Find this in your Stacked merchant dashboard</p>
+    <div id="stackedFields">
+      <label>Stacked API Key</label>
+      <input name="apiKey" id="apiKey" placeholder="Paste your merchant API key">
+      <p class="hint">Find this in your Stacked merchant dashboard</p>
+    </div>
+
+    <div id="btcpayFields" class="hidden">
+      <label>BTCPay Server URL</label>
+      <input name="btcpayUrl" id="btcpayUrl" placeholder="https://btcpay.example.com">
+      <label>API Key</label>
+      <input name="btcpayKey" id="btcpayKey" placeholder="Greenfield API key">
+      <p class="hint">Needs create-invoice &amp; view-invoice permissions</p>
+      <label>Currency</label>
+      <select name="currency" id="currency">
+        <option value="NZD" selected>NZD</option>
+        <option value="AUD">AUD</option>
+        <option value="USD">USD</option>
+        <option value="EUR">EUR</option>
+        <option value="GBP">GBP</option>
+        <option value="CAD">CAD</option>
+        <option value="JPY">JPY</option>
+        <option value="SATS">SATS</option>
+      </select>
+      <p class="hint">You'll pick the store on this device after it restarts</p>
+    </div>
 
     <button type="submit">Save &amp; Connect</button>
   </form>
@@ -78,6 +124,17 @@ const sel = document.getElementById('ssid');
 const manual = document.getElementById('manualssid');
 const toggle = document.getElementById('togglemanual');
 const rescan = document.getElementById('rescan');
+const provider = document.getElementById('provider');
+const stackedFields = document.getElementById('stackedFields');
+const btcpayFields = document.getElementById('btcpayFields');
+
+function updateProvider() {
+  const bp = provider.value === 'btcpay';
+  stackedFields.classList.toggle('hidden', bp);
+  btcpayFields.classList.toggle('hidden', !bp);
+}
+provider.addEventListener('change', updateProvider);
+updateProvider();
 
 function scan() {
   sel.innerHTML = '<option value="">Scanning…</option>';
@@ -110,6 +167,16 @@ document.getElementById('f').addEventListener('submit', e => {
     sel.value = '';
     sel.name = '';
     manual.name = 'ssid';
+  }
+  if (provider.value === 'btcpay') {
+    if (!document.getElementById('btcpayUrl').value ||
+        !document.getElementById('btcpayKey').value) {
+      e.preventDefault();
+      alert('BTCPay needs a server URL and API key');
+    }
+  } else if (!document.getElementById('apiKey').value) {
+    e.preventDefault();
+    alert('A Stacked API key is required');
   }
 });
 
@@ -151,10 +218,11 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
 
     // AP + STA so we can scan networks while the AP serves the portal
     WiFi.mode(WIFI_AP_STA);
-    WiFi.softAP(SETUP_AP_SSID, SETUP_AP_PASS);
+    String ssid = apSSID();
+    WiFi.softAP(ssid.c_str(), SETUP_AP_PASS);
     delay(500);
     Serial.printf("[SETUP] AP started: %s @ %s\n",
-                  SETUP_AP_SSID, WiFi.softAPIP().toString().c_str());
+                  ssid.c_str(), WiFi.softAPIP().toString().c_str());
 
     // Kick off an async scan so the dropdown is fast on first load
     WiFi.scanNetworks(true /* async */, true /* show hidden */);
@@ -222,16 +290,35 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
 
     // Handle form submission
     server.on("/save", HTTP_POST, [&server, &store, &saved]() {
-        String ssid   = server.arg("ssid");
-        String pass   = server.arg("pass");
-        String apiKey = server.arg("apiKey");
+        String ssid     = server.arg("ssid");
+        String pass     = server.arg("pass");
+        String provider = server.arg("provider");
 
-        if (ssid.isEmpty() || apiKey.isEmpty()) {
-            server.send(400, "text/plain", "SSID and API key are required");
+        if (ssid.isEmpty()) {
+            server.send(400, "text/plain", "WiFi SSID is required");
             return;
         }
 
-        store.save(ssid, pass, apiKey);
+        if (provider == "btcpay") {
+            String url = server.arg("btcpayUrl");
+            String key = server.arg("btcpayKey");
+            String cur = server.arg("currency");
+            if (url.isEmpty() || key.isEmpty()) {
+                server.send(400, "text/plain",
+                            "BTCPay URL and API key are required");
+                return;
+            }
+            // Store ID is resolved on-device after reboot.
+            store.saveBTCPay(ssid, pass, url, key, "", cur);
+        } else {
+            String apiKey = server.arg("apiKey");
+            if (apiKey.isEmpty()) {
+                server.send(400, "text/plain", "Stacked API key is required");
+                return;
+            }
+            store.saveStacked(ssid, pass, apiKey);
+        }
+
         server.send(200, "text/html", SETUP_OK_HTML);
         saved = true;
     });
@@ -244,16 +331,35 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
             return;
         }
 
-        String ssid   = doc["ssid"] | "";
-        String pass   = doc["pass"] | "";
-        String apiKey = doc["apiKey"] | "";
+        String ssid     = doc["ssid"] | "";
+        String pass     = doc["pass"] | "";
+        String provider = doc["provider"] | "stacked";
 
-        if (ssid.isEmpty() || apiKey.isEmpty()) {
-            server.send(400, "application/json", "{\"error\":\"ssid and apiKey required\"}");
+        if (ssid.isEmpty()) {
+            server.send(400, "application/json", "{\"error\":\"ssid required\"}");
             return;
         }
 
-        store.save(ssid, pass, apiKey);
+        if (provider == "btcpay") {
+            String url   = doc["btcpayUrl"] | "";
+            String key   = doc["apiKey"] | doc["btcpayKey"] | "";
+            String stId  = doc["storeId"] | "";  // optional; resolved on-device
+            String cur   = doc["currency"] | "";
+            if (url.isEmpty() || key.isEmpty()) {
+                server.send(400, "application/json",
+                            "{\"error\":\"btcpayUrl and apiKey required\"}");
+                return;
+            }
+            store.saveBTCPay(ssid, pass, url, key, stId, cur);
+        } else {
+            String apiKey = doc["apiKey"] | "";
+            if (apiKey.isEmpty()) {
+                server.send(400, "application/json", "{\"error\":\"apiKey required\"}");
+                return;
+            }
+            store.saveStacked(ssid, pass, apiKey);
+        }
+
         server.send(200, "application/json", "{\"ok\":true}");
         saved = true;
     });
@@ -295,6 +401,7 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
             printer.printReceipt(
                 "STACKED POS (TEST)",
                 "123-456-789",
+                "NZD",
                 12.34f,
                 21000,
                 "TEST-RECEIPT",
@@ -341,16 +448,34 @@ bool SetupPortal::checkSerial(ConfigStore& store) {
         return false;
     }
 
-    String ssid   = doc["ssid"] | "";
-    String pass   = doc["pass"] | "";
-    String apiKey = doc["apiKey"] | "";
+    String ssid     = doc["ssid"] | "";
+    String pass     = doc["pass"] | "";
+    String provider = doc["provider"] | "stacked";
 
-    if (ssid.isEmpty() || apiKey.isEmpty()) {
-        Serial.println("[SERIAL] Need ssid and apiKey");
+    if (ssid.isEmpty()) {
+        Serial.println("[SERIAL] Need ssid");
         return false;
     }
 
-    store.save(ssid, pass, apiKey);
+    if (provider == "btcpay") {
+        String url  = doc["btcpayUrl"] | "";
+        String key  = doc["apiKey"] | doc["btcpayKey"] | "";
+        String stId = doc["storeId"] | "";  // optional; resolved on-device
+        String cur  = doc["currency"] | "";
+        if (url.isEmpty() || key.isEmpty()) {
+            Serial.println("[SERIAL] Need btcpayUrl and apiKey");
+            return false;
+        }
+        store.saveBTCPay(ssid, pass, url, key, stId, cur);
+    } else {
+        String apiKey = doc["apiKey"] | "";
+        if (apiKey.isEmpty()) {
+            Serial.println("[SERIAL] Need apiKey");
+            return false;
+        }
+        store.saveStacked(ssid, pass, apiKey);
+    }
+
     Serial.println("[SERIAL] Config saved!");
     return true;
 }

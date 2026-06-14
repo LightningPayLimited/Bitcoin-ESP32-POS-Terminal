@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include "payment_provider.h"
 
 // ============================================================
 // Stacked Merchant API Client
@@ -11,35 +12,7 @@
 // GET  /api/merchant/profile   — merchant name/GST
 // ============================================================
 
-struct MerchantInvoice {
-    bool     ok;
-    String   paymentRequest;  // BOLT11 invoice string
-    String   lnurl;
-    String   reference;       // Transaction ref (for polling + refresh)
-    float    nzdAmount;
-    uint64_t satAmount;
-    String   error;
-};
-
-struct PaymentStatus {
-    bool     ok;
-    String   reference;
-    String   status;
-    uint64_t satAmount;
-    float    nzdAmount;
-    String   paidDate;
-    bool     isPaid;          // true when paidDate is set
-    String   error;
-};
-
-struct MerchantProfile {
-    bool   ok;
-    String companyName;
-    String gstNumber;
-    String error;
-};
-
-class StackedAPI {
+class StackedAPI : public PaymentProvider {
 public:
     void begin(const String& baseUrl, const String& apiKey);
 
@@ -47,17 +20,17 @@ public:
     /// Stacked handles NZD→sats conversion at current rate.
     MerchantInvoice createInvoice(float nzdAmount,
                                   const String& details = "",
-                                  const String& txlink = "");
+                                  const String& txlink = "") override;
 
     /// Refresh an expired invoice via txRef.
     /// Gets new bolt11 with updated BTC/NZD rate.
-    MerchantInvoice refreshInvoice(const String& txRef);
+    MerchantInvoice refreshInvoice(const String& txRef) override;
 
     /// Poll payment status. Paid when result.isPaid == true.
-    PaymentStatus checkPayment(const String& reference);
+    PaymentStatus checkPayment(const String& reference) override;
 
     /// Get merchant profile.
-    MerchantProfile getProfile();
+    MerchantProfile getProfile() override;
 
 private:
     String _base;

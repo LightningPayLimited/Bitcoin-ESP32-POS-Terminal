@@ -5,12 +5,32 @@
 #include <Adafruit_Thermal.h>
 #include <Arduino_GFX_Library.h>
 #include <HardwareSerial.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
 
 // Use UART1 — UART0 is the USB/serial console.
 static HardwareSerial    printerSerial(1);
 static Adafruit_Thermal  thermal(&printerSerial);
 
 Printer printer;
+
+// A queued receipt. Printing happens on a background task so the slow
+// (9600-baud) UART writes don't stall the UI loop. Jobs are heap-allocated
+// and the pointer is passed through the queue — copying a struct full of
+// Strings byte-for-byte through a FreeRTOS queue would double-free.
+struct ReceiptJob {
+    String   merchantName;
+    String   gstNumber;
+    String   currency;
+    String   reference;
+    String   paidDate;
+    float    fiat;
+    uint64_t sats;
+};
+
+static QueueHandle_t printQueue = nullptr;
+static void printerTask(void* arg);
 
 // Send a 1-bpp bitmap using GS v 0 (raster format). This clone ignores the
 // older DC2 * command and — as we discovered the hard way — also ignores
@@ -91,18 +111,24 @@ void Printer::begin() {
     // so we always treat begin() as success. If nothing is connected the
     // bytes simply float away into the ether.
     _ready = true;
+
+    // Background print task — receipts render here so the UI loop never
+    // blocks on the slow UART. Queue holds heap ReceiptJob pointers.
+    printQueue = xQueueCreate(4, sizeof(ReceiptJob*));
+    if (printQueue) {
+        xTaskCreatePinnedToCore(printerTask, "receipt", 8192, nullptr,
+                                1 /* low priority */, nullptr, tskNO_AFFINITY);
+    } else {
+        Serial.println("[PRINTER] queue alloc failed — printing disabled");
+        _ready = false;
+    }
+
     Serial.printf("[PRINTER] begin on TX=%d RX=%d @ %d baud\n",
                   PRINTER_TX_PIN, PRINTER_RX_PIN, PRINTER_BAUD);
 }
 
-void Printer::printReceipt(const String& merchantName,
-                           const String& gstNumber,
-                           float         nzdAmount,
-                           uint64_t      satAmount,
-                           const String& reference,
-                           const String& paidDate) {
-    if (!_ready) return;
-
+// Render + emit one receipt. Runs ONLY on the background print task.
+static void renderReceipt(const ReceiptJob& j) {
     thermal.wake();
     // ESC @ — full re-initialise.
     printerSerial.write(0x1B);
@@ -114,10 +140,10 @@ void Printer::printReceipt(const String& merchantName,
     feedDots(8);
 
     // ---- Header: merchant name + optional GST ----
-    printText(merchantName.length() ? merchantName : "STACKED POS",
+    printText(j.merchantName.length() ? j.merchantName : "STACKED POS",
               &FreeSansBold18pt7b, 'C', 40);
-    if (gstNumber.length()) {
-        printText("GST: " + gstNumber, &FreeSans12pt7b, 'C', 28);
+    if (j.gstNumber.length()) {
+        printText("GST: " + j.gstNumber, &FreeSans12pt7b, 'C', 28);
     }
     feedDots(12);
 
@@ -127,19 +153,20 @@ void Printer::printReceipt(const String& merchantName,
     feedDots(12);
 
     // ---- Amounts (left-aligned) ----
+    String cur = j.currency.length() ? j.currency : String("NZD");
     char buf[64];
-    snprintf(buf, sizeof(buf), "$%.2f NZD", nzdAmount);
+    snprintf(buf, sizeof(buf), "$%.2f %s", j.fiat, cur.c_str());
     printText(buf, &FreeSansBold18pt7b, 'L', 40);
-    snprintf(buf, sizeof(buf), "%lu sats", (unsigned long)satAmount);
+    snprintf(buf, sizeof(buf), "%lu sats", (unsigned long)j.sats);
     printText(buf, &FreeSans12pt7b, 'L', 28);
     feedDots(12);
 
     // ---- Metadata ----
-    if (paidDate.length()) {
-        printText("Paid:  " + paidDate, &FreeSans12pt7b, 'L', 28);
+    if (j.paidDate.length()) {
+        printText("Paid:  " + j.paidDate, &FreeSans12pt7b, 'L', 28);
     }
-    if (reference.length()) {
-        printText("Ref:   " + reference, &FreeSans12pt7b, 'L', 28);
+    if (j.reference.length()) {
+        printText("Ref:   " + j.reference, &FreeSans12pt7b, 'L', 28);
     }
     feedDots(16);
 
@@ -147,4 +174,35 @@ void Printer::printReceipt(const String& merchantName,
     feedDots(160);  // tear-off gap
 
     thermal.sleep();
+}
+
+// Background task: drain the queue, print each receipt, free the job.
+static void printerTask(void* /*arg*/) {
+    for (;;) {
+        ReceiptJob* job = nullptr;
+        if (xQueueReceive(printQueue, &job, portMAX_DELAY) == pdTRUE && job) {
+            unsigned long t0 = millis();
+            renderReceipt(*job);
+            Serial.printf("[PRINTER] receipt done in %lums\n", millis() - t0);
+            delete job;
+        }
+    }
+}
+
+void Printer::printReceipt(const String& merchantName,
+                           const String& gstNumber,
+                           const String& currency,
+                           float         fiatAmount,
+                           uint64_t      satAmount,
+                           const String& reference,
+                           const String& paidDate) {
+    if (!_ready || !printQueue) return;
+
+    ReceiptJob* job = new ReceiptJob{merchantName, gstNumber, currency,
+                                     reference, paidDate, fiatAmount, satAmount};
+    // Non-blocking enqueue — never stall the caller (the UI loop).
+    if (xQueueSend(printQueue, &job, 0) != pdTRUE) {
+        Serial.println("[PRINTER] queue full — dropping receipt");
+        delete job;
+    }
 }

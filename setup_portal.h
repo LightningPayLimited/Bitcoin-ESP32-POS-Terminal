@@ -20,6 +20,11 @@
 
 class SetupPortal {
 public:
+    /// The setup AP SSID, with a random 4-char base64 suffix appended so
+    /// multiple POS devices being provisioned at once don't collide.
+    /// Generated once on first call, then cached for the rest of the boot.
+    static String apSSID();
+
     /// Start the captive portal AP + web server.
     /// Blocks until config is received, then reboots.
     void runCaptivePortal(ConfigStore& store);

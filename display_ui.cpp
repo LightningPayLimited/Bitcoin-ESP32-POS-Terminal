@@ -1,5 +1,6 @@
 #include "display_ui.h"
 #include "config.h"
+#include "setup_portal.h"
 #include "logo.h"
 #include "splash_image.h"
 #include "pos_fonts.h"
@@ -205,7 +206,7 @@ void DisplayUI::showSetupInfo() {
     drawCenteredText("POS SETUP", SCREEN_WIDTH / 2, 80, 4, COL_ACCENT, COL_BG);
 
     drawCenteredText("Connect to WiFi:", SCREEN_WIDTH / 2, 220, 2, COL_FG, COL_BG);
-    drawCenteredText(SETUP_AP_SSID,       SCREEN_WIDTH / 2, 280, 3, COL_ACCENT, COL_BG);
+    drawCenteredText(SetupPortal::apSSID(), SCREEN_WIDTH / 2, 280, 3, COL_ACCENT, COL_BG);
 
     drawCenteredText("Then open browser to:", SCREEN_WIDTH / 2, 400, 2, COL_FG, COL_BG);
     drawCenteredText(SETUP_AP_IP,             SCREEN_WIDTH / 2, 460, 3, COL_ACCENT, COL_BG);
@@ -353,7 +354,7 @@ void DisplayUI::updateTimer(int secsLeft, int refreshCount) {
     }
 }
 
-void DisplayUI::showPaid(uint64_t sats, float nzd) {
+void DisplayUI::showPaid(uint64_t sats, float nzd, const String& currency) {
     _screen = Screen::PAID;
     _gfx->fillScreen(COL_BG);
 
@@ -366,7 +367,7 @@ void DisplayUI::showPaid(uint64_t sats, float nzd) {
     drawCenteredText("PAID", cx, 380, 7, COL_ACCENT, COL_BG);
 
     char info[64];
-    if (nzd > 0) snprintf(info, sizeof(info), "$%.2f NZD", nzd);
+    if (nzd > 0) snprintf(info, sizeof(info), "$%.2f %s", nzd, currency.c_str());
     else         snprintf(info, sizeof(info), "%lu sats", (unsigned long)sats);
     drawCenteredText(info, cx, 490, 3, COL_FG, COL_BG);
     if (nzd > 0) {
@@ -475,6 +476,59 @@ bool DisplayUI::anyTouch() {
     }
     if (!touched) _wasTouched = false;
     return false;
+}
+
+// ============================================================
+// BTCPay store picker
+// ============================================================
+#define SS_Y0   90
+#define SS_X    20
+#define SS_W    (SCREEN_WIDTH - 40)
+#define SS_H    90
+#define SS_GAP  14
+#define SS_MAX  6   // rows that fit between header and footer
+
+int DisplayUI::storeSelectCapacity() { return SS_MAX; }
+
+void DisplayUI::showStoreSelect(const String* names, int count) {
+    _screen = Screen::STORE_SELECT;
+    _gfx->fillScreen(COL_BG);
+    drawHeader("Select Store");
+
+    int shown = count < SS_MAX ? count : SS_MAX;
+    for (int i = 0; i < shown; i++) {
+        int y = SS_Y0 + i * (SS_H + SS_GAP);
+        _gfx->fillRoundRect(SS_X, y, SS_W, SS_H, 10, COL_KEYPAD_BG);
+
+        // Truncate long names so they don't overrun the row.
+        String label = names[i];
+        if (label.length() > 18) label = label.substring(0, 17) + "…";
+        drawCenteredText(label, SCREEN_WIDTH / 2, y + SS_H / 2, 3,
+                         COL_FG, COL_KEYPAD_BG);
+    }
+
+    drawCenteredText("Tap your store", SCREEN_WIDTH / 2,
+                     SCREEN_HEIGHT - 28, 2, COL_DIM, COL_BG);
+}
+
+int DisplayUI::pollStoreSelect(int count) {
+    uint16_t tx, ty;
+    bool touched = gt911ReadTouch(&tx, &ty);
+
+    if (touched && !_wasTouched && (millis() - _lastTouch > 250)) {
+        _wasTouched = true;
+        _lastTouch = millis();
+        int shown = count < SS_MAX ? count : SS_MAX;
+        for (int i = 0; i < shown; i++) {
+            int y = SS_Y0 + i * (SS_H + SS_GAP);
+            if (tx >= SS_X && tx < SS_X + SS_W && ty >= y && ty < y + SS_H) {
+                Serial.printf("[TOUCH] store row %d\n", i);
+                return i;
+            }
+        }
+    }
+    if (!touched) _wasTouched = false;
+    return -1;
 }
 
 Key DisplayUI::hitTest(int tx, int ty) {

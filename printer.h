@@ -6,18 +6,24 @@
 // Prints a Bitcoin payment receipt after a successful sale.
 // Safe to call printReceipt() even if the printer isn't connected —
 // init() will fail silently and subsequent calls become no-ops.
+//
+// printReceipt() is asynchronous: it hands the job to a background
+// FreeRTOS task and returns immediately, so the UI stays responsive
+// while the (slow, 9600-baud) receipt prints.
 // ============================================================
 
 class Printer {
 public:
-    /// Initialise the UART + printer. Returns true if the printer
-    /// responded (or we don't care — we still print blindly).
+    /// Initialise the UART + printer and start the background print task.
     void begin();
 
-    /// Print a payment receipt. Pass the values you want on paper.
+    /// Queue a payment receipt for printing. Returns immediately; the
+    /// receipt is rendered on a background task. `currency` is the fiat
+    /// label to print (e.g. "NZD", "USD").
     void printReceipt(const String& merchantName,
                       const String& gstNumber,
-                      float          nzdAmount,
+                      const String& currency,
+                      float          fiatAmount,
                       uint64_t       satAmount,
                       const String&  reference,
                       const String&  paidDate);

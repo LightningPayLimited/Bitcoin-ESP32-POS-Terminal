@@ -13,11 +13,20 @@
 #define STACKED_API_BASE "https://app.stackedbitcoin.com"
 
 // --- NVS keys ---
-#define NVS_NAMESPACE   "stacked"
-#define NVS_KEY_APIKEY  "api_key"
-#define NVS_KEY_SSID    "wifi_ssid"
-#define NVS_KEY_PASS    "wifi_pass"
-#define NVS_KEY_SETUP   "setup_done"
+#define NVS_NAMESPACE     "stacked"
+#define NVS_KEY_APIKEY    "api_key"
+#define NVS_KEY_SSID      "wifi_ssid"
+#define NVS_KEY_PASS      "wifi_pass"
+#define NVS_KEY_SETUP     "setup_done"
+// Payment-provider selection (added when BTCPay support landed).
+// Existing devices with no value default to Stacked.
+#define NVS_KEY_PROVIDER  "provider"     // "stacked" | "btcpay"
+#define NVS_KEY_BTCPAY_URL "bp_url"      // BTCPay Server base URL
+#define NVS_KEY_STORE_ID  "bp_store"     // BTCPay store ID (Greenfield)
+#define NVS_KEY_CURRENCY  "currency"     // invoice currency, e.g. "NZD"
+
+// Default invoice currency for BTCPay when none is supplied.
+#define BTCPAY_DEFAULT_CURRENCY "NZD"
 
 // --- Setup mode AP ---
 #define SETUP_AP_SSID   "StackedPOS-Setup"

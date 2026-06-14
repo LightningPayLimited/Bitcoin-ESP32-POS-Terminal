@@ -4,7 +4,7 @@
 
 enum class Screen {
     SPLASH, SETUP_INFO, AMOUNT_ENTRY, LOADING, QR_DISPLAY, PAID, ERROR,
-    SCREENSAVER,
+    SCREENSAVER, STORE_SELECT,
 };
 
 enum class Key {
@@ -26,7 +26,7 @@ public:
     void showAmountEntry(const String& amount, const String& currency);
     void showLoading(const String& message);
     void showQR(const String& bolt11, uint64_t sats, float nzd, int secsLeft, int refreshCount);
-    void showPaid(uint64_t sats, float nzd);
+    void showPaid(uint64_t sats, float nzd, const String& currency = "NZD");
     void showError(const String& message);
     void showWifiError(const String& ssid);
 
@@ -38,6 +38,14 @@ public:
     void showScreensaver();
 
     void updateTimer(int secsLeft, int refreshCount);
+
+    /// BTCPay store picker (shown after reboot when the store isn't chosen
+    /// yet). Draws up to a screenful of tappable store rows.
+    void showStoreSelect(const String* names, int count);
+    /// Returns the tapped store row index, or -1 if no tap this poll.
+    int  pollStoreSelect(int count);
+    /// Number of store rows that fit on screen (caller should cap to this).
+    static int storeSelectCapacity();
 
     Key  pollTouch();
     bool anyTouch();

@@ -29,6 +29,7 @@
 #include "setup_portal.h"
 #include "display_ui.h"
 #include "stacked_api.h"
+#include "btcpay_api.h"
 #include "printer.h"
 #include "nfc.h"
 #include "boltcard.h"
@@ -52,7 +53,15 @@ static State        state = State::BOOT;
 static ConfigStore  config;
 static SetupPortal  portal;
 DisplayUI           ui;  // non-static — referenced from setup_portal.cpp
-static StackedAPI   api;
+
+// Payment backend — one of these is selected at boot based on saved config.
+static StackedAPI       stackedApi;
+static BTCPayAPI        btcpayApi;
+static PaymentProvider* api = nullptr;
+
+// Fiat currency label shown on the numpad + receipts (NZD for Stacked,
+// the merchant-configured currency for BTCPay).
+static String currencyLabel = "NZD";
 
 static String merchantName = "";
 static String enteredAmount = "";
@@ -71,6 +80,7 @@ static unsigned long   lastActivityAt = 0;
 // ================================================================
 static bool checkFactoryResetButton();
 static void wifiRetryWaitMs(unsigned long ms, const String& ssid);
+static void resolveBTCPayStore();
 
 static char keyChar(Key k) {
     const char map[] = "0123456789";
@@ -86,7 +96,7 @@ void resetToIdle() {
     boltcardSubmitted = false;
     activeInvoice = {};
     lastActivityAt = millis();
-    ui.showAmountEntry(enteredAmount, "NZD");
+    ui.showAmountEntry(enteredAmount, currencyLabel);
 }
 
 void handleKey(Key k) {
@@ -117,7 +127,7 @@ void handleKey(Key k) {
     } else {
         return;
     }
-    ui.showAmountEntry(enteredAmount, "NZD");
+    ui.showAmountEntry(enteredAmount, currencyLabel);
 }
 
 // ================================================================
@@ -311,12 +321,30 @@ void setup() {
 
     Serial.printf("[BOOT] WiFi OK: %s\n", WiFi.localIP().toString().c_str());
 
-    // Init API
-    api.begin(STACKED_API_BASE, config.apiKey());
+    // Init API — pick the configured payment backend.
+    if (config.provider() == Provider::BTCPAY) {
+        btcpayApi.begin(config.btcpayUrl(), config.apiKey(),
+                        config.storeId(), config.currency());
+        api = &btcpayApi;
+        currencyLabel = config.currency();
+        Serial.printf("[BOOT] Provider: BTCPay (%s, %s)\n",
+                      config.btcpayUrl().c_str(), currencyLabel.c_str());
+
+        // First boot after BTCPay setup: no store chosen yet. Query the
+        // stores this key can access and let the merchant pick on-device.
+        if (config.storeId().isEmpty()) {
+            resolveBTCPayStore();
+        }
+    } else {
+        stackedApi.begin(STACKED_API_BASE, config.apiKey());
+        api = &stackedApi;
+        currencyLabel = "NZD";
+        Serial.println("[BOOT] Provider: Stacked");
+    }
 
     // Fetch merchant profile
     ui.showLoading("Loading merchant...");
-    MerchantProfile profile = api.getProfile();
+    MerchantProfile profile = api->getProfile();
     if (profile.ok) {
         merchantName = profile.companyName;
         Serial.printf("[BOOT] Merchant: %s\n", merchantName.c_str());
@@ -412,12 +440,67 @@ static void wifiRetryWaitMs(unsigned long ms, const String& ssid) {
     }
 }
 
+// Resolve which BTCPay store to use, the first time the device boots after
+// BTCPay setup. Queries the stores the API key can access:
+//   - 0 stores / unreachable → show error, keep retrying (reset button works)
+//   - 1 store  → auto-select it
+//   - 2+       → on-device touch picker
+// The chosen store ID is persisted so this only runs once.
+static void resolveBTCPayStore() {
+    ui.showLoading("Finding stores...");
+
+    std::vector<BTCPayStore> stores;
+    while (true) {
+        stores = btcpayApi.listStores();
+        if (!stores.empty()) break;
+        Serial.println("[BOOT] No BTCPay stores / unreachable — retrying");
+        ui.showError("No stores found.\nCheck server/key.\nRetrying...");
+        // 5s wait that keeps the factory-reset button responsive so a
+        // mistyped URL/key can be wiped without a power cycle.
+        unsigned long t0 = millis();
+        while (millis() - t0 < 5000) {
+            portal.checkSerial(config);
+            checkFactoryResetButton();
+            delay(50);
+        }
+    }
+
+    int sel = 0;
+    if (stores.size() == 1) {
+        Serial.printf("[BOOT] Single store, auto-selecting: %s\n",
+                      stores[0].name.c_str());
+    } else {
+        int n = (int)stores.size();
+        int cap = DisplayUI::storeSelectCapacity();
+        if (n > cap) {
+            Serial.printf("[BOOT] %d stores; only first %d are selectable\n", n, cap);
+            n = cap;
+        }
+        std::vector<String> names;
+        for (int i = 0; i < n; i++) names.push_back(stores[i].name);
+
+        ui.showStoreSelect(names.data(), n);
+        sel = -1;
+        while (sel < 0) {
+            sel = ui.pollStoreSelect(n);
+            portal.checkSerial(config);
+            checkFactoryResetButton();
+            delay(20);
+        }
+    }
+
+    config.saveStoreId(stores[sel].id);
+    btcpayApi.setStore(stores[sel].id);
+    Serial.printf("[BOOT] Store selected: %s (%s)\n",
+                  stores[sel].name.c_str(), stores[sel].id.c_str());
+}
+
 void loop() {
     // Always check for serial commands (RESET, config JSON)
     portal.checkSerial(config);
     if (checkFactoryResetButton()) {
         // Released early — restore the appropriate screen.
-        if (state == State::IDLE)             ui.showAmountEntry(enteredAmount, "NZD");
+        if (state == State::IDLE)             ui.showAmountEntry(enteredAmount, currencyLabel);
         else if (state == State::SCREENSAVER) ui.showScreensaver();
     }
 
@@ -462,7 +545,7 @@ void loop() {
             : "$" + String(activeNzd, 2) + " NZD";
 
         Serial.printf("[POS] Creating invoice $%.2f NZD\n", activeNzd);
-        activeInvoice = api.createInvoice(activeNzd, details);
+        activeInvoice = api->createInvoice(activeNzd, details);
 
         if (!activeInvoice.ok) {
             state = State::ERROR;
@@ -507,7 +590,7 @@ void loop() {
             }
 
             Serial.printf("[POS] Refreshing invoice (%d)...\n", refreshCount + 1);
-            MerchantInvoice refreshed = api.refreshInvoice(activeInvoice.reference);
+            MerchantInvoice refreshed = api->refreshInvoice(activeInvoice.reference);
 
             // If refresh fails (e.g. old invoice expired server-side), fall
             // back to creating a brand-new invoice at the same NZD amount
@@ -518,7 +601,7 @@ void loop() {
                 String details = merchantName.length() > 0
                     ? merchantName + " $" + String(activeNzd, 2) + " NZD"
                     : "$" + String(activeNzd, 2) + " NZD";
-                refreshed = api.createInvoice(activeNzd, details);
+                refreshed = api->createInvoice(activeNzd, details);
             }
 
             if (refreshed.ok) {
@@ -547,17 +630,17 @@ void loop() {
             lastPollAt = now;
             Serial.printf("[POS] Polling (elapsed=%lus, ref='%s')\n",
                           elapsed / 1000, activeInvoice.reference.c_str());
-            PaymentStatus ps = api.checkPayment(activeInvoice.reference);
+            PaymentStatus ps = api->checkPayment(activeInvoice.reference);
 
             if (ps.ok && ps.isPaid) {
                 state = State::PAID;
                 stateEnteredAt = millis();
                 float nzd = ps.nzdAmount > 0 ? ps.nzdAmount : activeNzd;
                 uint64_t sats = ps.satAmount > 0 ? ps.satAmount : activeInvoice.satAmount;
-                ui.showPaid(sats, nzd);
-                Serial.printf("[POS] PAID! $%.2f NZD (%lu sats)\n",
-                              nzd, (unsigned long)sats);
-                printer.printReceipt(merchantName, "", nzd, sats,
+                ui.showPaid(sats, nzd, currencyLabel);
+                Serial.printf("[POS] PAID! %.2f %s (%lu sats)\n",
+                              nzd, currencyLabel.c_str(), (unsigned long)sats);
+                printer.printReceipt(merchantName, "", currencyLabel, nzd, sats,
                                      activeInvoice.reference, ps.paidDate);
                 break;
             }
