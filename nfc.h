@@ -18,6 +18,12 @@ public:
     /// Initialise the chip. Returns true if the PN532 responded.
     bool begin();
 
+    /// Try to bring the PN532 up on a specific SDA/SCL pair (definitive —
+    /// performs a real firmware-version read, not just an address ACK).
+    /// Used by the bus probe to confirm candidate pins. On success the driver
+    /// is left configured on these pins and ready() becomes true.
+    bool tryPins(int sda, int scl);
+
     /// Poll for a card. Non-blocking (uses a short timeout).
     /// Returns true if a card is present and `outUid` / `outNdefUrl`
     /// have been populated. `outNdefUrl` may be empty if the tag

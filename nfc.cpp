@@ -2,6 +2,24 @@
 #include "config.h"
 #include <PN532_SWI2C.h>
 #include <PN532.h>
+#include <Wire.h>
+
+// CN3 routes the PN532 onto GPIO7/8 — the SAME bus as the GT911 touch panel
+// (and ES8311 codec), which is driven by the hardware Wire master. We bit-bang
+// the PN532 (the hardware I2C driver can't ride its clock stretching), and that
+// leaves the pins as plain GPIO + de-inits the I2C peripheral. So after every
+// NFC transaction we hand the bus back to Wire by re-initialising it. The two
+// devices time-share the pins; the loop is single-threaded so they never race.
+// Compile-time no-op when NFC is on its own dedicated pins.
+static void releaseBusToWire() {
+#if (NFC_SDA_PIN == I2C_SDA_PIN) && (NFC_SCL_PIN == I2C_SCL_PIN)
+    // The bit-bang's pinMode() already made Arduino's peripheral manager
+    // de-init the I2C bus (freeing its buffers), so we must NOT call Wire.end()
+    // here — that would double-free and corrupt the heap. Just bring the bus
+    // back up; Wire.begin() re-inits the master and re-attaches pins 7/8.
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, 100000);  // match the GT911 lib's 100kHz
+#endif
+}
 
 // PN532 over a bit-banged software I2C bus. The ESP32-P4's hardware i2c-ng
 // driver can't ride the chip's clock stretching (floods ESP_ERR_INVALID_STATE
@@ -12,38 +30,60 @@ static PN532*       pn532     = nullptr;
 
 NFC nfc;
 
-bool NFC::begin() {
+// Try to bring up the PN532 on a specific SDA/SCL assignment. Returns true and
+// leaves the driver configured + SAMConfig'd on success. CN3 carries the bus on
+// GPIO26/27, but which line is SDA vs SCL isn't fixed by the connector, so
+// begin() calls this for both orderings and keeps whichever responds.
+static bool tryInit(int sda, int scl) {
     // Resting line levels before we start driving the bus. Both should read
     // HIGH on a healthy idle bus; a line stuck at 0 means it's held low
     // externally (e.g. a dead/under-powered module).
-    pinMode(NFC_SDA_PIN, INPUT_PULLUP);
-    pinMode(NFC_SCL_PIN, INPUT_PULLUP);
+    pinMode(sda, INPUT_PULLUP);
+    pinMode(scl, INPUT_PULLUP);
     delay(5);
-    Serial.printf("[NFC] Idle line levels (INPUT_PULLUP): SDA(GPIO%d)=%d SCL(GPIO%d)=%d  (1=high/healthy, 0=held low)\n",
-                  NFC_SDA_PIN, digitalRead(NFC_SDA_PIN),
-                  NFC_SCL_PIN, digitalRead(NFC_SCL_PIN));
+    Serial.printf("[NFC] Try SDA=GPIO%d SCL=GPIO%d (idle: SDA=%d SCL=%d; 1=healthy)\n",
+                  sda, scl, digitalRead(sda), digitalRead(scl));
 
-    pn532i2c = new PN532_SWI2C(NFC_SDA_PIN, NFC_SCL_PIN);
+    // Fresh driver objects each attempt (avoid leaking the previous try's).
+    if (pn532)    { delete pn532;    pn532    = nullptr; }
+    if (pn532i2c) { delete pn532i2c; pn532i2c = nullptr; }
+    pn532i2c = new PN532_SWI2C(sda, scl);
     pn532    = new PN532(*pn532i2c);
     pn532->begin();
 
     uint32_t ver = pn532->getFirmwareVersion();
-    if (!ver) {
-        Serial.println("[NFC] PN532 not responding to firmware-version query");
-        Serial.println("[NFC] Check: DIP switches in I2C mode (1=ON,2=OFF)? Power LED on?");
-        _ready = false;
-        return false;
-    }
+    if (!ver) return false;
+
     Serial.printf("[NFC] PN532 chip=0x%02X fw=%d.%d via bit-bang I2C (SDA=%d SCL=%d)\n",
                   (uint8_t)((ver >> 24) & 0xFF),
                   (uint8_t)((ver >> 16) & 0xFF),
                   (uint8_t)((ver >> 8)  & 0xFF),
-                  NFC_SDA_PIN, NFC_SCL_PIN);
+                  sda, scl);
 
     pn532->setPassiveActivationRetries(0x05);
     pn532->SAMConfig();
-    _ready = true;
+    releaseBusToWire();   // restore the bus for the touch panel after init
     return true;
+}
+
+bool NFC::tryPins(int sda, int scl) {
+    if (tryInit(sda, scl)) { _ready = true; return true; }
+    return false;
+}
+
+bool NFC::begin() {
+    // CN3's SDA/SCL orientation isn't fixed — try the configured order, then
+    // the swap. Whichever the PN532 answers on wins.
+    if (tryInit(NFC_SDA_PIN, NFC_SCL_PIN) ||
+        tryInit(NFC_SCL_PIN, NFC_SDA_PIN)) {
+        _ready = true;
+        return true;
+    }
+
+    Serial.println("[NFC] PN532 not responding on either SDA/SCL ordering");
+    Serial.println("[NFC] Check: DIP switches in I2C mode (1=ON,2=OFF)? Power LED on? CN3 cable?");
+    _ready = false;
+    return false;
 }
 
 // NDEF URL prefix table (NFC Forum URI Record spec)
@@ -219,43 +259,48 @@ static String readType4Ndef() {
 bool NFC::readCard(String& outUid, String& outNdefUrl) {
     if (!_ready || !pn532) return false;
 
+    // Early-out before any bus activity — no hand-back needed on these paths.
     if (millis() - _lastReadMs < 200) return false;
     _lastReadMs = millis();
 
+    // Everything below bit-bangs GPIO7/8; route to a single exit so we always
+    // hand the shared bus back to the touch panel afterwards.
+    bool found = false;
     uint8_t uid[10];
     uint8_t uidLen = 0;
-    if (!pn532->readPassiveTargetID(PN532_MIFARE_ISO14443A,
-                                    uid, &uidLen, 50)) return false;
-
-    char hex[24] = {0};
-    for (uint8_t i = 0; i < uidLen && i < 10; i++) {
-        snprintf(hex + i * 2, 3, "%02X", uid[i]);
-    }
-    outUid = String(hex);
-    outNdefUrl = "";
-
-    // Try Type-4 first (NTAG424 / Boltcard — these run in privacy mode with a
-    // random UID each tap, and their URL is only reachable over ISO-DEP). Done
-    // immediately after activation so a failed Type-2 read can't deselect the
-    // card first.
-    outNdefUrl = readType4Ndef();
-
-    // Fall back to Type-2 (NTAG21x / Mifare Ultralight) if no Type-4 URL.
-    if (outNdefUrl.length() == 0) {
-        uint8_t buf[64];
-        size_t got = 0;
-        bool t2Ok = false;
-        for (uint8_t page = 4; page <= 12 && got + 4 <= sizeof(buf); page += 4) {
-            uint8_t pageBuf[16];
-            if (!pn532->mifareultralight_ReadPage(page, pageBuf)) break;
-            t2Ok = true;
-            memcpy(buf + got, pageBuf, 16);
-            got += 16;
-            bool terminator = false;
-            for (size_t k = 0; k < got; k++) if (buf[k] == 0xFE) { terminator = true; break; }
-            if (terminator) break;
+    if (pn532->readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLen, 50)) {
+        char hex[24] = {0};
+        for (uint8_t i = 0; i < uidLen && i < 10; i++) {
+            snprintf(hex + i * 2, 3, "%02X", uid[i]);
         }
-        if (t2Ok && got > 0) outNdefUrl = parseType2Ndef(buf, got);
+        outUid = String(hex);
+        outNdefUrl = "";
+
+        // Try Type-4 first (NTAG424 / Boltcard — privacy mode, random UID each
+        // tap, URL only reachable over ISO-DEP). Done immediately after
+        // activation so a failed Type-2 read can't deselect the card first.
+        outNdefUrl = readType4Ndef();
+
+        // Fall back to Type-2 (NTAG21x / Mifare Ultralight) if no Type-4 URL.
+        if (outNdefUrl.length() == 0) {
+            uint8_t buf[64];
+            size_t got = 0;
+            bool t2Ok = false;
+            for (uint8_t page = 4; page <= 12 && got + 4 <= sizeof(buf); page += 4) {
+                uint8_t pageBuf[16];
+                if (!pn532->mifareultralight_ReadPage(page, pageBuf)) break;
+                t2Ok = true;
+                memcpy(buf + got, pageBuf, 16);
+                got += 16;
+                bool terminator = false;
+                for (size_t k = 0; k < got; k++) if (buf[k] == 0xFE) { terminator = true; break; }
+                if (terminator) break;
+            }
+            if (t2Ok && got > 0) outNdefUrl = parseType2Ndef(buf, got);
+        }
+        found = true;
     }
-    return true;
+
+    releaseBusToWire();   // hand GPIO7/8 back to the touch panel
+    return found;
 }

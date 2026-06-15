@@ -94,9 +94,22 @@
 #define FACTORY_RESET_PIN       35
 #define FACTORY_RESET_HOLD_MS   5000
 
-// --- NFC reader (PN532 on header I2C bus, separate from touch) ---
-#define NFC_SDA_PIN  32
-#define NFC_SCL_PIN  28
+// --- NFC reader (PN532 on the CN3 SH1.0 I2C connector) ---
+// CN3 turned out to be the ES_I2C / system bus — the SAME GPIO7/8 the GT911
+// touch panel and ES8311 codec live on. The PN532 is bit-banged here and
+// time-shares the pins with the hardware-Wire touch driver (see nfc.cpp:
+// releaseBusToWire). SDA=7, SCL=8 (confirmed by a live firmware-version read).
+// (Was GPIO32/28 on flying leads; CN3 lets us drop the flying wires.)
+#define NFC_SDA_PIN  I2C_SDA_PIN   // 7
+#define NFC_SCL_PIN  I2C_SCL_PIN   // 8
+
+// --- NFC bus probe (diagnostic) ---
+// When 1, the firmware bit-bangs a quick I2C address probe at boot — BEFORE
+// the touch bus starts — looking for the PN532 (addr 0x24) on candidate pin
+// pairs, and shows the result on screen + serial. Used to discover which
+// GPIOs the SH1.0 / CN3 I2C connector is wired to. Set to 0 for production.
+// CN3 resolved to GPIO7/8 (shared ES_I2C bus) — probe retired.
+#define NFC_BUS_PROBE 0
 // IRQ + RST aren't wired on the 4-pin module. Adafruit's lib needs
 // concrete pin numbers though — pick any free pad. These won't be driven.
 #define NFC_IRQ_PIN  36

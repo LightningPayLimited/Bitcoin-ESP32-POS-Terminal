@@ -34,6 +34,11 @@
 #include "nfc.h"
 #include "boltcard.h"
 
+#if NFC_BUS_PROBE
+#include "driver/gpio.h"                      // GPIO_IS_VALID_GPIO
+#include "esp_private/esp_gpio_reserve.h"     // esp_gpio_is_reserved
+#endif
+
 // ================================================================
 // State
 // ================================================================
@@ -81,6 +86,167 @@ static unsigned long   lastActivityAt = 0;
 static bool checkFactoryResetButton();
 static void wifiRetryWaitMs(unsigned long ms, const String& ssid);
 static void resolveBTCPayStore();
+
+#if NFC_BUS_PROBE
+// ================================================================
+// NFC bus probe — discover which GPIOs the SH1.0/CN3 I2C connector uses.
+// A minimal bit-bang I2C address probe (open-drain emulated): drive a line
+// LOW with OUTPUT+0, release HIGH via INPUT_PULLUP. Honours clock stretching
+// by waiting for SCL to actually rise. Non-destructive — leaves both lines
+// released so the hardware Wire driver can claim them afterwards.
+// ================================================================
+struct NfcProbeResult {
+    bool ran = false, ack78 = false, ack3228 = false;
+    int  nCand = 0;
+    int  cand[24];
+    int  foundSda = -1, foundScl = -1;
+};
+static NfcProbeResult nfcProbe;
+
+// Pins already used by the board/app — skip in the beacon to cut noise.
+static bool nfcKnownPin(int n) {
+    switch (n) {
+        case 3:  case 5:  case 7:  case 8:  case 21: case 23:   // touch/display
+        case 28: case 30: case 31: case 32: case 33:            // NFC/printer
+        case 35: case 36: case 37:                              // button/NFC aux
+        case 24: case 25:                                       // USB-JTAG/console
+            return true;
+        default: return false;
+    }
+}
+
+static inline void busLow(int pin)  { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
+static inline void busRelease(int p){ pinMode(p, INPUT_PULLUP); }
+static inline void busSclHigh(int scl) {
+    pinMode(scl, INPUT_PULLUP);
+    unsigned long t0 = micros();                       // honour clock stretch
+    while (digitalRead(scl) == 0 && micros() - t0 < 1000) { /* wait */ }
+}
+
+// Returns true if a device ACKs its 7-bit address on these pins.
+static bool i2cProbeAddr(int sda, int scl, uint8_t addr7) {
+    const int H = 6;  // ~80 kHz half-period — slow and forgiving
+    busRelease(sda); busRelease(scl);
+    delayMicroseconds(H * 2);
+
+    busLow(sda); delayMicroseconds(H);                 // START
+    busLow(scl); delayMicroseconds(H);
+
+    uint8_t b = (uint8_t)((addr7 << 1) | 0);           // address + write
+    for (int i = 0; i < 8; i++) {
+        if (b & 0x80) busRelease(sda); else busLow(sda);
+        delayMicroseconds(H);
+        busSclHigh(scl); delayMicroseconds(H);
+        busLow(scl);     delayMicroseconds(H);
+        b <<= 1;
+    }
+
+    busRelease(sda); delayMicroseconds(H);             // 9th clock = ACK
+    busSclHigh(scl); delayMicroseconds(H);
+    bool ack = (digitalRead(sda) == 0);                // LOW = ACK
+    busLow(scl); delayMicroseconds(H);
+
+    busLow(sda); delayMicroseconds(H);                 // STOP
+    busSclHigh(scl); delayMicroseconds(H);
+    busRelease(sda); delayMicroseconds(H);
+
+    busRelease(sda); busRelease(scl);                  // leave idle for Wire
+    return ack;
+}
+
+static void runNfcBusProbe() {
+    // 1) Direct address checks on the two known buses (control + CN3=7/8 case).
+    Serial.println("[PROBE] Direct address check (0x24):");
+    nfcProbe.ack78   = i2cProbeAddr(I2C_SDA_PIN, I2C_SCL_PIN, 0x24);
+    nfcProbe.ack3228 = i2cProbeAddr(NFC_SDA_PIN, NFC_SCL_PIN, 0x24);
+    Serial.printf("[PROBE]   GPIO%d/%d: %s    GPIO%d/%d: %s\n",
+                  I2C_SDA_PIN, I2C_SCL_PIN, nfcProbe.ack78 ? "FOUND" : "absent",
+                  NFC_SDA_PIN, NFC_SCL_PIN, nfcProbe.ack3228 ? "FOUND" : "absent");
+
+    nfcProbe.foundSda = nfcProbe.foundScl = -1;
+
+    // 2) Address-probe SWEEP over a safe shortlist, BOTH orderings. The module
+    //    has no pull-ups (the beacon below confirms that), so the real CN3 lines
+    //    won't show up as pulled-high — we must actively address them. Every pin
+    //    here is known-safe to drive: ES_I2C bus (7/8), the GPIO26/27 schematic
+    //    candidate, and the broken-out header GPIOs. Reserved pins are skipped.
+    //    Trying both (sda,scl) orders also tells us which line is which.
+    static const int CAND[] = { 7, 8, 26, 27, 29, 48, 49, 50, 51, 52 };
+    const int NCAND = sizeof(CAND) / sizeof(CAND[0]);
+    Serial.println("[PROBE] Sweep (both orderings) over safe candidate pins:");
+    for (int i = 0; i < NCAND && nfcProbe.foundSda < 0; i++) {
+        for (int j = 0; j < NCAND; j++) {
+            if (i == j) continue;
+            int sda = CAND[i], scl = CAND[j];
+            if (esp_gpio_is_reserved((1ULL << sda) | (1ULL << scl))) continue;
+            // Fast pre-filter: bare address ACK. If that bites, CONFIRM with a
+            // real PN532 firmware-version read so we never report a false hit.
+            if (!i2cProbeAddr(sda, scl, 0x24)) continue;
+            Serial.printf("[PROBE]   ACK on SDA=%d SCL=%d — confirming...\n", sda, scl);
+            if (nfc.tryPins(sda, scl)) {
+                nfcProbe.foundSda = sda; nfcProbe.foundScl = scl;
+                break;
+            }
+            Serial.println("[PROBE]   ...firmware read failed (false ACK), continuing");
+        }
+    }
+    for (int i = 0; i < NCAND; i++) pinMode(CAND[i], INPUT);   // restore hi-Z
+
+    if (nfcProbe.foundSda >= 0) {
+        Serial.printf("[PROBE] >>> PN532 on CN3: SDA=GPIO%d  SCL=GPIO%d <<<\n",
+                      nfcProbe.foundSda, nfcProbe.foundScl);
+    } else {
+        Serial.println("[PROBE] Sweep found nothing — running read-only beacon for info");
+    }
+
+    // 3) Read-only beacon (informational). Lists pins held high externally —
+    //    these are OTHER devices' pull-ups (SDIO/codec), NOT the no-pull-up
+    //    PN532. Handy for spotting the bus layout. Reading never drives a pin.
+    nfcProbe.nCand = 0;
+    for (int n = 0; n <= 54; n++) {
+        if (!GPIO_IS_VALID_GPIO(n)) continue;
+        if (esp_gpio_is_reserved(1ULL << n)) continue;
+        if (nfcKnownPin(n)) continue;
+        pinMode(n, INPUT_PULLDOWN);
+        delayMicroseconds(80);
+        bool hi = (digitalRead(n) == HIGH);
+        pinMode(n, INPUT);
+        if (hi && nfcProbe.nCand < 24) nfcProbe.cand[nfcProbe.nCand++] = n;
+    }
+    Serial.printf("[PROBE] beacon pulled-up pins: %d\n", nfcProbe.nCand);
+
+    nfcProbe.ran = true;
+}
+
+static void showNfcBusProbe() {
+    if (!nfcProbe.ran) return;
+    auto* g = ui.gfx();
+    g->fillScreen(COL_BG);
+    g->setTextColor(COL_ACCENT, COL_BG);
+    ui.setCursorTopLeft(12, 24, 3);
+    g->print("NFC bus probe");
+
+    int y = 96;
+    if (nfcProbe.foundSda >= 0) {
+        g->setTextColor(COL_SUCCESS, COL_BG);
+        ui.setCursorTopLeft(12, y, 3); g->printf("CN3 SDA = GPIO%d", nfcProbe.foundSda); y += 46;
+        ui.setCursorTopLeft(12, y, 3); g->printf("CN3 SCL = GPIO%d", nfcProbe.foundScl); y += 60;
+    } else {
+        g->setTextColor(COL_FG, COL_BG);
+        ui.setCursorTopLeft(12, y, 2);
+        g->printf("Pulled-up pins (%d):", nfcProbe.nCand); y += 34;
+        String s;
+        for (int i = 0; i < nfcProbe.nCand; i++) { s += "G"; s += nfcProbe.cand[i]; s += "  "; }
+        if (!nfcProbe.nCand) s = "(none)";
+        ui.setCursorTopLeft(12, y, 2); g->print(s); y += 44;
+    }
+    g->setTextColor(COL_DIM, COL_BG);
+    ui.setCursorTopLeft(12, y, 2);
+    g->printf("7/8:%s  32/28:%s", nfcProbe.ack78 ? "Y" : "N",
+              nfcProbe.ack3228 ? "Y" : "N");
+    delay(4500);
+}
+#endif  // NFC_BUS_PROBE
 
 static char keyChar(Key k) {
     const char map[] = "0123456789";
@@ -147,16 +313,26 @@ void setup() {
     // Thermal printer — initialises whether or not one is plugged in
     printer.begin();
 
-    Serial.println("[BOOT] Calling ui.begin()...");
+#if NFC_BUS_PROBE
+    // Probe for the PN532 on candidate I2C pins BEFORE the touch bus starts
+    // (Wire would otherwise own GPIO 7/8). Result is shown on screen below.
+    runNfcBusProbe();
+#endif
 
-    // NFC reader is initialised AFTER ui.begin() (which calls Wire.begin()).
-    // Done below this println for clarity, see further down.
+    Serial.println("[BOOT] Calling ui.begin()...");
     Serial.flush();
     ui.begin();
     Serial.println("[BOOT] ui.begin() returned OK");
     Serial.flush();
 
-    // I2C bus is now up — initialise NFC reader on the same bus.
+#if NFC_BUS_PROBE
+    showNfcBusProbe();   // paint probe result for a few seconds
+#endif
+
+    // NFC shares GPIO7/8 with the touch panel (CN3 = ES_I2C bus), so it must
+    // come up AFTER ui.begin() has initialised Wire/touch. nfc.begin() bit-bangs
+    // the PN532 then hands the bus back to Wire (see nfc.cpp).
+    Serial.println("[BOOT] Initialising NFC (shared bus)...");
     nfc.begin();
 
     ui.showSplash();
