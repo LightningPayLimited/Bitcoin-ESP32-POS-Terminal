@@ -52,18 +52,22 @@ static bool tryInit(int sda, int scl) {
     pn532->begin();
 
     uint32_t ver = pn532->getFirmwareVersion();
-    if (!ver) return false;
+    bool ok = (ver != 0);
+    if (ok) {
+        Serial.printf("[NFC] PN532 chip=0x%02X fw=%d.%d via bit-bang I2C (SDA=%d SCL=%d)\n",
+                      (uint8_t)((ver >> 24) & 0xFF),
+                      (uint8_t)((ver >> 16) & 0xFF),
+                      (uint8_t)((ver >> 8)  & 0xFF),
+                      sda, scl);
+        pn532->setPassiveActivationRetries(0x05);
+        pn532->SAMConfig();
+    }
 
-    Serial.printf("[NFC] PN532 chip=0x%02X fw=%d.%d via bit-bang I2C (SDA=%d SCL=%d)\n",
-                  (uint8_t)((ver >> 24) & 0xFF),
-                  (uint8_t)((ver >> 16) & 0xFF),
-                  (uint8_t)((ver >> 8)  & 0xFF),
-                  sda, scl);
-
-    pn532->setPassiveActivationRetries(0x05);
-    pn532->SAMConfig();
-    releaseBusToWire();   // restore the bus for the touch panel after init
-    return true;
+    // CRITICAL: pinMode() above de-inited the shared touch (Wire) bus, so hand
+    // it back on EVERY exit — success or fail. Otherwise a missing/unresponsive
+    // PN532 leaves the touch panel dead (floods "bus is not initialized").
+    releaseBusToWire();
+    return ok;
 }
 
 bool NFC::tryPins(int sda, int scl) {

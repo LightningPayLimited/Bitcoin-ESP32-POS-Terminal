@@ -87,7 +87,8 @@ static const char SETUP_HTML[] PROGMEM = R"rawhtml(
     <input id="manualssid" name="ssidManual" class="hidden" placeholder="Hidden or custom SSID">
 
     <label>WiFi Password</label>
-    <input name="pass" type="password" placeholder="WiFi password">
+    <input name="pass" type="text" placeholder="WiFi password"
+           autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
 
     <div id="stackedFields">
       <label>Stacked API Key</label>
