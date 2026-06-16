@@ -184,17 +184,17 @@ void DisplayUI::showSplash(const String& merchantName) {
     _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ACCENT);
     _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ACCENT);
 
+    // Lightning Pay wordmark (white text + gold bolt) centred on black.
     int logoX = (SCREEN_WIDTH - LOGO_W) / 2;
-    int logoY = 80;
+    int logoY = 310;
     _gfx->draw16bitRGBBitmap(logoX, logoY, LOGO_RGB565, LOGO_W, LOGO_H);
 
-    drawCenteredText("STACKED", SCREEN_WIDTH / 2, 380, 7, COL_ACCENT, COL_BG);
-    drawCenteredText("Bitcoin Point of Sale", SCREEN_WIDTH / 2, 460, 2, COL_FG, COL_BG);
+    drawCenteredText("Bitcoin Point of Sale", SCREEN_WIDTH / 2, 420, 2, COL_FG, COL_BG);
 
     if (merchantName.length() > 0) {
-        drawCenteredText(merchantName, SCREEN_WIDTH / 2, 530, 2, COL_DIM, COL_BG);
+        drawCenteredText(merchantName, SCREEN_WIDTH / 2, 480, 2, COL_DIM, COL_BG);
     }
-    drawCenteredText("Lightning Network", SCREEN_WIDTH / 2, 600, 2, COL_DIM, COL_BG);
+    drawCenteredText("Lightning Network", SCREEN_WIDTH / 2, 560, 2, COL_ACCENT, COL_BG);
 }
 
 void DisplayUI::showSetupInfo() {
@@ -215,7 +215,7 @@ void DisplayUI::showSetupInfo() {
     drawCenteredText("Tap NFC card to test", SCREEN_WIDTH / 2, 537, 2, COL_DIM, COL_BG);
 
     drawCenteredText("Enter WiFi details",       SCREEN_WIDTH / 2, 600, 2, COL_DIM, COL_BG);
-    drawCenteredText("and Stacked API key",      SCREEN_WIDTH / 2, 640, 2, COL_DIM, COL_BG);
+    drawCenteredText("and merchant API key",     SCREEN_WIDTH / 2, 640, 2, COL_DIM, COL_BG);
 
     // Test Print button — exercise the thermal printer without a real sale
     _gfx->fillRoundRect(TP_X, TP_Y, TP_W, TP_H, 10, COL_KEYPAD_BG);
@@ -253,7 +253,7 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
     _screen = Screen::AMOUNT_ENTRY;
     if (!alreadyHere) {
         _gfx->fillScreen(COL_BG);
-        drawHeader("Stacked: Pay with Bitcoin");
+        drawHeader("Lightning Pay");
     }
 
     // Amount box (redraws the box fill → wipes the previous amount text)
@@ -302,7 +302,7 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
 void DisplayUI::showLoading(const String& message) {
     _screen = Screen::LOADING;
     _gfx->fillScreen(COL_BG);
-    drawHeader("Stacked");
+    drawHeader("Lightning Pay");
     drawCenteredText(message, SCREEN_WIDTH / 2, 380, 3, COL_FG, COL_BG);
     drawCenteredText(". . .", SCREEN_WIDTH / 2, 450, 3, COL_ACCENT, COL_BG);
 }

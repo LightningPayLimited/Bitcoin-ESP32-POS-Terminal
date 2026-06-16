@@ -140,7 +140,7 @@ static void renderReceipt(const ReceiptJob& j) {
     feedDots(8);
 
     // ---- Header: merchant name + optional GST ----
-    printText(j.merchantName.length() ? j.merchantName : "STACKED POS",
+    printText(j.merchantName.length() ? j.merchantName : "LIGHTNING PAY",
               &FreeSansBold18pt7b, 'C', 40);
     if (j.gstNumber.length()) {
         printText("GST: " + j.gstNumber, &FreeSans12pt7b, 'C', 28);

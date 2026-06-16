@@ -36,31 +36,31 @@ static const char SETUP_HTML[] PROGMEM = R"rawhtml(
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stacked POS Setup</title>
+<title>Lightning Pay Setup</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, sans-serif; background: #111; color: #fff;
          display: flex; justify-content: center; padding: 20px; }
   .card { background: #1a1a1a; border-radius: 16px; padding: 32px;
           max-width: 400px; width: 100%; }
-  h1 { color: #14afac; font-size: 24px; margin-bottom: 4px; }
+  h1 { color: #f7931a; font-size: 24px; margin-bottom: 4px; }
   .sub { color: #888; font-size: 14px; margin-bottom: 24px; }
   label { display: block; color: #ccc; font-size: 14px; margin-bottom: 6px; margin-top: 16px; }
   input, select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #333;
           background: #222; color: #fff; font-size: 16px; appearance: none; }
-  input:focus, select:focus { border-color: #14afac; outline: none; }
+  input:focus, select:focus { border-color: #f7931a; outline: none; }
   .hint { color: #666; font-size: 12px; margin-top: 4px; }
   button { width: 100%; padding: 14px; border-radius: 8px; border: none;
-           background: #14afac; color: #000; font-size: 18px; font-weight: 700;
+           background: #f7931a; color: #000; font-size: 18px; font-weight: 700;
            cursor: pointer; margin-top: 24px; }
-  button:hover { background: #0f8f8c; }
+  button:hover { background: #d97e00; }
   .row { display: flex; gap: 8px; align-items: center; }
   .row select { flex: 1; }
-  .iconbtn { width: auto; padding: 12px 14px; background: #333; color: #14afac;
+  .iconbtn { width: auto; padding: 12px 14px; background: #333; color: #f7931a;
              border-radius: 8px; border: 1px solid #444; font-size: 16px; cursor: pointer;
              margin: 0; }
   .iconbtn:hover { background: #3a3a3a; }
-  .linkbtn { background: none; color: #14afac; border: none; padding: 6px 0;
+  .linkbtn { background: none; color: #f7931a; border: none; padding: 6px 0;
              font-size: 13px; cursor: pointer; text-align: left; width: auto; margin-top: 4px; }
   .hidden { display: none; }
   .rssi { color: #888; font-size: 12px; margin-left: 4px; }
@@ -68,7 +68,7 @@ static const char SETUP_HTML[] PROGMEM = R"rawhtml(
 </head>
 <body>
 <div class="card">
-  <h1>&#x26A1; Stacked POS</h1>
+  <h1>&#x26A1; Lightning Pay</h1>
   <p class="sub">Configure your Bitcoin point of sale terminal</p>
 
   <form method="POST" action="/save" id="f">
@@ -191,7 +191,7 @@ static const char SETUP_OK_HTML[] PROGMEM = R"rawhtml(
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stacked POS</title>
+<title>Lightning Pay</title>
 <style>
   body { font-family: -apple-system, sans-serif; background: #111; color: #fff;
          display: flex; justify-content: center; align-items: center;
@@ -399,7 +399,7 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
         if (ui.pollTouch() == Key::TEST_PRINT) {
             Serial.println("[SETUP] Test print requested (touch)");
             printer.printReceipt(
-                "STACKED POS (TEST)",
+                "LIGHTNING PAY (TEST)",
                 "123-456-789",
                 "NZD",
                 12.34f,
