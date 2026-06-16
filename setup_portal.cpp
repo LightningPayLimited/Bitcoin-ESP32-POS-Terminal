@@ -12,17 +12,16 @@
 extern DisplayUI ui;
 
 // ================================================================
-// AP SSID — base name plus a random 4-char base64 suffix so several
-// devices being set up simultaneously advertise distinct networks.
+// AP SSID — base name plus a random 4-char uppercase-hex suffix so
+// several devices being set up simultaneously advertise distinct networks.
 // ================================================================
 String SetupPortal::apSSID() {
     static String ssid;
     if (ssid.length() == 0) {
-        static const char b64[] =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        static const char hex[] = "0123456789ABCDEF";
         ssid = SETUP_AP_SSID "-";
         for (int i = 0; i < 4; i++) {
-            ssid += b64[esp_random() & 0x3F];
+            ssid += hex[esp_random() & 0xF];
         }
     }
     return ssid;
