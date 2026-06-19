@@ -29,7 +29,7 @@
 #define BTCPAY_DEFAULT_CURRENCY "NZD"
 
 // --- Setup mode AP ---
-#define SETUP_AP_SSID   "StackedPOS-Setup"
+#define SETUP_AP_SSID   "LP-POS-Setup"
 #define SETUP_AP_PASS   ""
 #define SETUP_AP_IP     "192.168.4.1"
 

@@ -203,7 +203,10 @@ void DisplayUI::showSetupInfo() {
     _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ACCENT);
     _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ACCENT);
 
-    drawCenteredText("POS SETUP", SCREEN_WIDTH / 2, 80, 4, COL_ACCENT, COL_BG);
+    // Lightning Pay wordmark at the top.
+    _gfx->draw16bitRGBBitmap((SCREEN_WIDTH - LOGO_W) / 2, 30, LOGO_RGB565, LOGO_W, LOGO_H);
+
+    drawCenteredText("POS SETUP", SCREEN_WIDTH / 2, 135, 4, COL_ACCENT, COL_BG);
 
     drawCenteredText("Connect to WiFi:", SCREEN_WIDTH / 2, 220, 2, COL_FG, COL_BG);
     drawCenteredText(SetupPortal::apSSID(), SCREEN_WIDTH / 2, 280, 3, COL_ACCENT, COL_BG);
