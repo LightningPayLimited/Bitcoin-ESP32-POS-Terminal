@@ -1,5 +1,7 @@
 #pragma once
 #include <Arduino.h>
+#include <time.h>
+#include <vector>
 
 // ============================================================
 // Payment Provider — common interface for the POS backend.
@@ -44,6 +46,30 @@ struct MerchantProfile {
     String error;
 };
 
+// One transaction as returned by the provider's history endpoint.
+// `satAmount`/`nzdAmount` are the effective amounts — the received value
+// when settled, otherwise the invoiced value. Times are UTC epoch seconds.
+struct TxRecord {
+    String   reference;
+    uint64_t satAmount;
+    float    nzdAmount;
+    time_t   createdAt;   // 0 if the timestamp couldn't be parsed
+    bool     isPaid;
+};
+
+// Live status of a past invoice, re-checked on demand from the history screen.
+enum class InvoiceState { ERROR, PENDING, PAID, EXPIRED };
+
+// One page of transaction history.
+struct TxPage {
+    bool                  ok;
+    int                   total;     // total records on the server (pre-filter)
+    int                   rawCount;  // records the server returned this page,
+                                     // before any client-side type filtering
+    std::vector<TxRecord> records;
+    String                error;
+};
+
 class PaymentProvider {
 public:
     virtual ~PaymentProvider() {}
@@ -61,4 +87,19 @@ public:
 
     /// Merchant profile (name/GST). ok == false if unsupported.
     virtual MerchantProfile getProfile() = 0;
+
+    /// Fetch one page of transaction history within [fromIso, toIso]
+    /// (ISO-8601 UTC). Providers that don't support history return
+    /// ok == false (the default below) so the POS can show a notice.
+    virtual TxPage getTransactions(const String& fromIso, const String& toIso,
+                                   int limit, int offset) {
+        TxPage p = {};
+        p.error = "Transaction history not supported";
+        return p;
+    }
+
+    /// Re-check a past invoice's live status by reference. Default unsupported.
+    virtual InvoiceState checkInvoiceState(const String& reference) {
+        return InvoiceState::ERROR;
+    }
 };

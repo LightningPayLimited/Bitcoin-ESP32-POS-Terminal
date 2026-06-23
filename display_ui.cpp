@@ -26,6 +26,50 @@
 #define TP_W       360
 #define TP_H       70
 
+// Menu button in the top-right of the amount-entry header (opens history)
+#define MENU_W     54
+#define MENU_H     38
+#define MENU_X     (SCREEN_WIDTH - MENU_W - 8)
+#define MENU_Y     ((HDR_H - MENU_H) / 2)
+
+// --- Transaction history screen ---
+// Back button (top-left of the header)
+#define BACK_W     78
+#define BACK_H     38
+#define BACK_X     6
+#define BACK_Y     ((HDR_H - BACK_H) / 2)
+
+// Timeframe tabs (4 across, just under the header)
+#define TAB_Y      54
+#define TAB_H      44
+#define TAB_MARGIN 8
+#define TAB_GAP    6
+#define TAB_W      ((SCREEN_WIDTH - 2 * TAB_MARGIN - 3 * TAB_GAP) / 4)
+#define TAB_COUNT  4
+#define TAB_X(i)   (TAB_MARGIN + (i) * (TAB_W + TAB_GAP))
+
+// Transaction list area
+#define TXL_TOP    140
+#define TXL_BOTTOM 744
+#define TXL_ROW_H  58
+#define TXL_XL     18
+#define TXL_XR     (SCREEN_WIDTH - 18)
+
+// Per-row "Check" button (re-checks live invoice status)
+#define CHK_W      98
+#define CHK_H      40
+#define CHK_X      (SCREEN_WIDTH - 18 - CHK_W)
+#define CHK_YOFF   ((TXL_ROW_H - CHK_H) / 2)   // y within a row
+// Left content stops just before the Check button.
+#define TXL_XR2    (CHK_X - 12)
+
+// Scroll footer (prev / page indicator / next)
+#define SCR_Y      750
+#define SCR_H      44
+#define SCR_PREV_X 8
+#define SCR_NEXT_X (SCREEN_WIDTH - 128)
+#define SCR_BTN_W  120
+
 static const char* KP[KP_ROWS][KP_COLS] = {
     {"1", "2", "3", "<"},
     {"4", "5", "6", "C"},
@@ -165,6 +209,17 @@ void DisplayUI::drawHeader(const String& text) {
     drawCenteredText(text, SCREEN_WIDTH / 2, HDR_H / 2, 3, COL_BG, COL_HEADER_BG);
 }
 
+// Hamburger menu button drawn over the right end of the orange header.
+void DisplayUI::drawMenuButton() {
+    _gfx->fillRoundRect(MENU_X, MENU_Y, MENU_W, MENU_H, 7, COL_BG);
+    int barW = MENU_W - 22;
+    int x0   = MENU_X + 11;
+    for (int i = 0; i < 3; i++) {
+        int y = MENU_Y + 11 + i * 8;
+        _gfx->fillRect(x0, y, barW, 3, COL_ACCENT);
+    }
+}
+
 void DisplayUI::drawButton(int x, int y, int w, int h,
                            const char* label, uint16_t bg, uint16_t fg, int textSize) {
     _gfx->fillRoundRect(x + 2, y + 2, w - 4, h - 4, 8, bg);
@@ -257,6 +312,7 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
     if (!alreadyHere) {
         _gfx->fillScreen(COL_BG);
         drawHeader("Lightning Pay");
+        drawMenuButton();
     }
 
     // Amount box (redraws the box fill → wipes the previous amount text)
@@ -439,6 +495,258 @@ void DisplayUI::showError(const String& message) {
 }
 
 // ============================================================
+// Transaction history
+// ============================================================
+
+// Left/right aligned text helpers (the on-screen tables need alignment that
+// drawCenteredText doesn't give). yTop is the visual top of the glyphs.
+static void drawLeftAt(Arduino_GFX* g, const String& s, int x, int yTop,
+                       int size, uint16_t fg, uint16_t bg) {
+    applyPosFont(g, size);
+    g->setTextColor(fg, bg);
+    int16_t x1, y1; uint16_t w, h;
+    g->getTextBounds(s.c_str(), 0, 0, &x1, &y1, &w, &h);
+    g->setCursor(x - x1, yTop - y1);
+    g->print(s);
+}
+
+static void drawRightAt(Arduino_GFX* g, const String& s, int xRight, int yTop,
+                        int size, uint16_t fg, uint16_t bg) {
+    applyPosFont(g, size);
+    g->setTextColor(fg, bg);
+    int16_t x1, y1; uint16_t w, h;
+    g->getTextBounds(s.c_str(), 0, 0, &x1, &y1, &w, &h);
+    g->setCursor(xRight - w - x1, yTop - y1);
+    g->print(s);
+}
+
+// "12,345" — group an integer with thousands separators.
+static String groupInt(uint64_t n) {
+    String raw;
+    if (n == 0) raw = "0";
+    while (n > 0) { raw = char('0' + (int)(n % 10)) + raw; n /= 10; }
+    String out; int cnt = 0;
+    for (int j = (int)raw.length() - 1; j >= 0; j--) {
+        out = String(raw[j]) + out;
+        if (++cnt % 3 == 0 && j > 0) out = "," + out;
+    }
+    return out;
+}
+
+// Rows of transactions that fit in the list area.
+static int historyRowsPerPage() { return (TXL_BOTTOM - TXL_TOP) / TXL_ROW_H; }
+
+// Gather indices of d.all whose createdAt is in the selected timeframe.
+// d.all is already newest-first, so the result preserves that order.
+static void historyMatches(const HistoryData& d, Timeframe tf,
+                           std::vector<int>& out) {
+    time_t s, e;
+    timeframeRange(d, tf, s, e);
+    out.clear();
+    for (int i = 0; i < (int)d.all.size(); i++) {
+        time_t t = d.all[i].createdAt;
+        if (t >= s && t < e) out.push_back(i);
+    }
+}
+
+void DisplayUI::resetHistoryView() {
+    _histTf   = Timeframe::DAY;
+    _histPage = 0;
+}
+
+void DisplayUI::showTransactionHistory(const HistoryData& d,
+                                       const String& currency) {
+    _screen = Screen::TXN_HISTORY;
+    _gfx->fillScreen(COL_BG);
+    drawHeader("Transactions");
+
+    // Back button (top-left, over the orange header).
+    _gfx->fillRoundRect(BACK_X, BACK_Y, BACK_W, BACK_H, 7, COL_BG);
+    drawCenteredText("< Back", BACK_X + BACK_W / 2, BACK_Y + BACK_H / 2, 2,
+                     COL_ACCENT, COL_BG);
+
+    if (!d.ok) {
+        String msg = d.error == "Clock not set" ? "Clock not synced yet" : d.error;
+        drawCenteredText("Couldn't load", SCREEN_WIDTH / 2, 360, 4, COL_ERROR, COL_BG);
+        drawCenteredText(msg, SCREEN_WIDTH / 2, 430, 2, COL_DIM, COL_BG);
+        return;
+    }
+
+    // --- Timeframe tabs ---
+    for (int i = 0; i < TAB_COUNT; i++) {
+        bool sel = ((int)_histTf == i);
+        int x = TAB_X(i);
+        _gfx->fillRoundRect(x, TAB_Y, TAB_W, TAB_H, 8,
+                            sel ? COL_ACCENT : COL_KEYPAD_BG);
+        drawCenteredText(timeframeLabel((Timeframe)i), x + TAB_W / 2,
+                         TAB_Y + TAB_H / 2, 2, sel ? COL_BG : COL_FG,
+                         sel ? COL_ACCENT : COL_KEYPAD_BG);
+    }
+
+    // --- Matches for the selected timeframe ---
+    std::vector<int> idx;
+    historyMatches(d, _histTf, idx);
+    int count = (int)idx.size();
+
+    int paidCount = 0;
+    double paidNzd = 0;
+    for (int i : idx) if (d.all[i].isPaid) { paidCount++; paidNzd += d.all[i].nzdAmount; }
+
+    // Summary line: how many taken + paid total for the period.
+    char summary[64];
+    snprintf(summary, sizeof(summary), "%d txns  -  %d paid  -  $%.2f %s",
+             count, paidCount, paidNzd, currency.c_str());
+    drawCenteredText(summary, SCREEN_WIDTH / 2, 118, 2, COL_ACCENT, COL_BG);
+    _gfx->drawFastHLine(TXL_XL, 134, SCREEN_WIDTH - 2 * TXL_XL, COL_DIM);
+
+    // --- Clamp page + slice ---
+    int rpp = historyRowsPerPage();
+    int totalPages = count > 0 ? (count + rpp - 1) / rpp : 1;
+    if (_histPage >= totalPages) _histPage = totalPages - 1;
+    if (_histPage < 0) _histPage = 0;
+    int first = _histPage * rpp;
+    int last  = first + rpp; if (last > count) last = count;
+
+    if (count == 0) {
+        drawCenteredText("No transactions", SCREEN_WIDTH / 2, TXL_TOP + 40, 2,
+                         COL_DIM, COL_BG);
+        if (d.truncated)
+            drawCenteredText("(older records omitted)", SCREEN_WIDTH / 2,
+                             TXL_TOP + 80, 1, COL_DIM, COL_BG);
+        return;
+    }
+
+    // --- Transaction rows ---
+    for (int n = first; n < last; n++) {
+        const TxRecord& r = d.all[idx[n]];
+        int ry = TXL_TOP + (n - first) * TXL_ROW_H;
+
+        char when[24] = "--";
+        if (r.createdAt) {
+            struct tm lt; localtime_r(&r.createdAt, &lt);
+            strftime(when, sizeof(when), "%a %d %b %H:%M", &lt);
+        }
+        char money[16];
+        snprintf(money, sizeof(money), "$%.2f", r.nzdAmount);
+
+        // Left: date over amount. Right of that (before the button): the
+        // recorded paid state + sats. Far right: the Check button.
+        drawLeftAt(_gfx, when, TXL_XL, ry + 4, 2, COL_FG, COL_BG);
+        if (r.isPaid)
+            drawRightAt(_gfx, "paid", TXL_XR2, ry + 6, 1, COL_SUCCESS, COL_BG);
+        else
+            drawRightAt(_gfx, "unpaid", TXL_XR2, ry + 6, 1, COL_DIM, COL_BG);
+
+        drawLeftAt(_gfx, money, TXL_XL, ry + 30, 2, COL_ACCENT, COL_BG);
+        drawRightAt(_gfx, groupInt(r.satAmount) + " sats",
+                    TXL_XR2, ry + 32, 1, COL_DIM, COL_BG);
+
+        drawCheckButton(ry + CHK_YOFF, "Check", COL_KEYPAD_BG, COL_FG);
+
+        if (n < last - 1)
+            _gfx->drawFastHLine(TXL_XL, ry + TXL_ROW_H - 2,
+                                SCREEN_WIDTH - 2 * TXL_XL, 0x1082);
+    }
+
+    // --- Scroll footer ---
+    char pageInfo[40];
+    snprintf(pageInfo, sizeof(pageInfo), "%d-%d of %d", first + 1, last, count);
+    drawCenteredText(pageInfo, SCREEN_WIDTH / 2, SCR_Y + SCR_H / 2, 2,
+                     COL_FG, COL_BG);
+
+    bool canPrev = _histPage > 0;
+    bool canNext = _histPage < totalPages - 1;
+    _gfx->fillRoundRect(SCR_PREV_X, SCR_Y, SCR_BTN_W, SCR_H, 8,
+                        canPrev ? COL_KEYPAD_BG : 0x1082);
+    drawCenteredText("Prev", SCR_PREV_X + SCR_BTN_W / 2, SCR_Y + SCR_H / 2, 2,
+                     canPrev ? COL_FG : COL_DIM, canPrev ? COL_KEYPAD_BG : 0x1082);
+    _gfx->fillRoundRect(SCR_NEXT_X, SCR_Y, SCR_BTN_W, SCR_H, 8,
+                        canNext ? COL_KEYPAD_BG : 0x1082);
+    drawCenteredText("Next", SCR_NEXT_X + SCR_BTN_W / 2, SCR_Y + SCR_H / 2, 2,
+                     canNext ? COL_FG : COL_DIM, canNext ? COL_KEYPAD_BG : 0x1082);
+}
+
+void DisplayUI::drawCheckButton(int y, const String& label, uint16_t bg, uint16_t fg) {
+    _gfx->fillRoundRect(CHK_X, y, CHK_W, CHK_H, 8, bg);
+    drawCenteredText(label, CHK_X + CHK_W / 2, y + CHK_H / 2, 2, fg, bg);
+}
+
+void DisplayUI::showCheckResult(InvoiceState state) {
+    if (_checkBtnY < 0) return;
+    const char* label; uint16_t bg, fg;
+    switch (state) {
+        case InvoiceState::PAID:    label = "Paid";    bg = COL_SUCCESS;    fg = COL_BG; break;
+        case InvoiceState::PENDING: label = "Pending"; bg = COL_ACCENT;     fg = COL_BG; break;
+        case InvoiceState::EXPIRED: label = "Expired"; bg = COL_ERROR;      fg = COL_FG; break;
+        default:                    label = "Error";   bg = COL_KEYPAD_BG;  fg = COL_ERROR; break;
+    }
+    drawCheckButton(_checkBtnY, label, bg, fg);
+}
+
+DisplayUI::HistEvent DisplayUI::pollTransactionHistory(const HistoryData& d,
+                                                       const String& currency,
+                                                       int& outRecordIdx) {
+    uint16_t tx, ty;
+    bool touched = gt911ReadTouch(&tx, &ty);
+    if (!touched) { _wasTouched = false; return HistEvent::NONE; }
+    if (_wasTouched || (millis() - _lastTouch <= 200)) return HistEvent::NONE;
+    _wasTouched = true;
+    _lastTouch  = millis();
+
+    // Back button.
+    if (tx >= BACK_X && tx < BACK_X + BACK_W && ty >= BACK_Y && ty < BACK_Y + BACK_H)
+        return HistEvent::BACK;
+
+    // Timeframe tabs.
+    if (ty >= TAB_Y && ty < TAB_Y + TAB_H) {
+        for (int i = 0; i < TAB_COUNT; i++) {
+            int x = TAB_X(i);
+            if (tx >= x && tx < x + TAB_W) {
+                if ((int)_histTf != i) {
+                    _histTf   = (Timeframe)i;
+                    _histPage = 0;
+                    showTransactionHistory(d, currency);
+                }
+                return HistEvent::NONE;
+            }
+        }
+    }
+
+    // Scroll buttons.
+    if (ty >= SCR_Y && ty < SCR_Y + SCR_H) {
+        if (tx >= SCR_PREV_X && tx < SCR_PREV_X + SCR_BTN_W && _histPage > 0) {
+            _histPage--;
+            showTransactionHistory(d, currency);
+        } else if (tx >= SCR_NEXT_X && tx < SCR_NEXT_X + SCR_BTN_W) {
+            _histPage++;   // showTransactionHistory clamps to the last page
+            showTransactionHistory(d, currency);
+        }
+        return HistEvent::NONE;
+    }
+
+    // A row's Check button.
+    if (tx >= CHK_X && tx < CHK_X + CHK_W && ty >= TXL_TOP && ty < TXL_BOTTOM) {
+        int row = (ty - TXL_TOP) / TXL_ROW_H;
+        int ry  = TXL_TOP + row * TXL_ROW_H;
+        if (ty < ry + CHK_YOFF || ty >= ry + CHK_YOFF + CHK_H)
+            return HistEvent::NONE;   // tap fell in the inter-row gap
+
+        std::vector<int> idx;
+        historyMatches(d, _histTf, idx);
+        int rpp = historyRowsPerPage();
+        int n   = _histPage * rpp + row;
+        if (n < 0 || n >= (int)idx.size()) return HistEvent::NONE;
+
+        outRecordIdx = idx[n];
+        _checkBtnY   = ry + CHK_YOFF;
+        drawCheckButton(_checkBtnY, "...", COL_ACCENT, COL_BG);  // spinner
+        return HistEvent::CHECK;
+    }
+
+    return HistEvent::NONE;
+}
+
+// ============================================================
 // Touch
 // ============================================================
 Key DisplayUI::pollTouch() {
@@ -451,6 +759,10 @@ Key DisplayUI::pollTouch() {
         Serial.printf("[TOUCH] raw=%ld,%ld  scr=%u,%u\n",
                       (long)gt911LastRawX(), (long)gt911LastRawY(), tx, ty);
         if (_screen == Screen::AMOUNT_ENTRY) {
+            if (tx >= MENU_X && tx < MENU_X + MENU_W &&
+                ty >= MENU_Y && ty < MENU_Y + MENU_H) {
+                return Key::MENU;
+            }
             Key k = hitTest(tx, ty);
             Serial.printf("[TOUCH] hit -> key=%d\n", (int)k);
             return k;

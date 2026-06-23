@@ -1,10 +1,11 @@
 #pragma once
 #include <Arduino.h>
 #include "gfx_config.h"
+#include "tx_history.h"
 
 enum class Screen {
     SPLASH, SETUP_INFO, AMOUNT_ENTRY, LOADING, QR_DISPLAY, PAID, ERROR,
-    SCREENSAVER, STORE_SELECT,
+    SCREENSAVER, STORE_SELECT, TXN_HISTORY,
 };
 
 enum class Key {
@@ -12,6 +13,7 @@ enum class Key {
     D0, D1, D2, D3, D4, D5, D6, D7, D8, D9,
     DOT, DEL, CLEAR, CHARGE,
     TEST_PRINT,
+    MENU,           // top-right menu button on the amount screen
 };
 
 class DisplayUI {
@@ -29,6 +31,22 @@ public:
     void showPaid(uint64_t sats, float nzd, const String& currency = "NZD");
     void showError(const String& message);
     void showWifiError(const String& ssid);
+
+    /// Transaction history: timeframe tabs + a scrollable list of individual
+    /// transactions for the selected period, with a count + paid total.
+    /// Call resetHistoryView() before the first show() to reset tab/scroll.
+    void resetHistoryView();
+    void showTransactionHistory(const HistoryData& d, const String& currency);
+
+    // Result of a touch on the history screen.
+    enum class HistEvent { NONE, BACK, CHECK };
+    /// Handle a touch (tabs / scroll / back / a row's Check button). Re-renders
+    /// internally on tab/scroll. On CHECK, outRecordIdx is the d.all index of
+    /// the tapped transaction and the button shows a "..." spinner.
+    HistEvent pollTransactionHistory(const HistoryData& d, const String& currency,
+                                     int& outRecordIdx);
+    /// Paint the live-check outcome on the row whose Check button was tapped.
+    void showCheckResult(InvoiceState state);
 
     /// Show the last NFC tap (UID + NDEF URL) in a diagnostic band on the
     /// setup screen, so bench NFC testing needs no serial monitor.
@@ -69,7 +87,14 @@ private:
     bool   _wasTouched = false;
     unsigned long _lastTouch = 0;
 
+    // Transaction-history view state (selected tab + scroll page).
+    Timeframe _histTf    = Timeframe::DAY;
+    int       _histPage  = 0;
+    int       _checkBtnY = -1;   // y of the Check button last tapped
+
     void drawHeader(const String& text);
+    void drawMenuButton();
+    void drawCheckButton(int y, const String& label, uint16_t bg, uint16_t fg);
     void drawButton(int x, int y, int w, int h, const char* label, uint16_t bg, uint16_t fg, int textSize);
     void drawCenteredText(const String& s, int cx, int cy, int size, uint16_t fg, uint16_t bg);
     Key  hitTest(int tx, int ty);

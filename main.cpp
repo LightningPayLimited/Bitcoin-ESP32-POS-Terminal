@@ -28,6 +28,7 @@
 #include "config_store.h"
 #include "setup_portal.h"
 #include "display_ui.h"
+#include "tx_history.h"
 #include "stacked_api.h"
 #include "btcpay_api.h"
 #include "printer.h"
@@ -52,6 +53,7 @@ enum class State {
     AWAITING_PAYMENT,
     PAID,
     ERROR,
+    TXN_HISTORY,       // Transaction history / takings screen
 };
 
 static State        state = State::BOOT;
@@ -263,6 +265,25 @@ void resetToIdle() {
     activeInvoice = {};
     lastActivityAt = millis();
     ui.showAmountEntry(enteredAmount, currencyLabel);
+}
+
+// Fetch + show the transaction-history screen. Blocks while paging the API
+// (the "Loading..." screen is up meanwhile). Falls back to an error screen
+// if there's no WiFi.
+static HistoryData histData;   // held while the history screen is up
+
+void openTransactionHistory() {
+    if (WiFi.status() != WL_CONNECTED) {
+        state = State::ERROR;
+        stateEnteredAt = millis();
+        ui.showError("No WiFi connection");
+        return;
+    }
+    ui.showLoading("Loading transactions...");
+    histData = buildHistory(*api);
+    ui.resetHistoryView();
+    state = State::TXN_HISTORY;
+    ui.showTransactionHistory(histData, currencyLabel);
 }
 
 void handleKey(Key k) {
@@ -497,6 +518,18 @@ void setup() {
 
     Serial.printf("[BOOT] WiFi OK: %s\n", WiFi.localIP().toString().c_str());
 
+    // Sync the wall-clock so the transaction-history screen can compute
+    // calendar boundaries (this week / month) in NZ local time. SNTP runs in
+    // the background; wait briefly for the first sync but don't block forever.
+    configTzTime("NZST-12NZDT,M9.5.0,M4.1.0/3",
+                 "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+    for (int i = 0; i < 24 && time(nullptr) < 1700000000L; i++) delay(250);
+    {
+        time_t t = time(nullptr);
+        Serial.printf("[BOOT] Clock: %s", t >= 1700000000L
+                          ? ctime(&t) : "not synced\n");
+    }
+
     // Init API — pick the configured payment backend.
     if (config.provider() == Provider::BTCPAY) {
         btcpayApi.begin(config.btcpayUrl(), config.apiKey(),
@@ -685,7 +718,10 @@ void loop() {
     // --- Numpad ---
     case State::IDLE: {
         Key k = ui.pollTouch();
-        if (k != Key::NONE) {
+        if (k == Key::MENU) {
+            lastActivityAt = millis();
+            openTransactionHistory();
+        } else if (k != Key::NONE) {
             handleKey(k);
             lastActivityAt = millis();
         } else if (millis() - lastActivityAt > SCREENSAVER_TIMEOUT_MS) {
@@ -865,6 +901,23 @@ void loop() {
     // --- Paid — stay until the merchant taps to dismiss ---
     case State::PAID: {
         if (ui.anyTouch()) resetToIdle();
+        break;
+    }
+
+    // --- Transaction history — tabs/scroll handled in poll, Back returns ---
+    case State::TXN_HISTORY: {
+        int recIdx = -1;
+        DisplayUI::HistEvent ev =
+            ui.pollTransactionHistory(histData, currencyLabel, recIdx);
+        if (ev == DisplayUI::HistEvent::BACK) {
+            resetToIdle();
+        } else if (ev == DisplayUI::HistEvent::CHECK &&
+                   recIdx >= 0 && recIdx < (int)histData.all.size()) {
+            // Re-check live status of the tapped transaction (button already
+            // shows a spinner). Blocks briefly on the POST.
+            InvoiceState st = api->checkInvoiceState(histData.all[recIdx].reference);
+            ui.showCheckResult(st);
+        }
         break;
     }
 

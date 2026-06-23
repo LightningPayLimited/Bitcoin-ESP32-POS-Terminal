@@ -145,6 +145,6 @@ Auth: `api-key` header.
 - [ ] Sound via onboard ES8311 codec (cha-ching!)
 - [ ] Receipt printing (thermal printer via UART)
 - [ ] ESP Web Tools flash button on Stacked website
-- [ ] Transaction history screen
+- [x] Transaction history screen
 - [x] Settings screen (WiFi reconfigure)
 - [ ] NFC tap-to-pay support

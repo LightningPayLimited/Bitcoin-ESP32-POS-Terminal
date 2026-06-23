@@ -32,6 +32,13 @@ public:
     /// Get merchant profile.
     MerchantProfile getProfile() override;
 
+    /// GET /api/merchant/transactions — one page of history.
+    TxPage getTransactions(const String& fromIso, const String& toIso,
+                           int limit, int offset) override;
+
+    /// Re-check a past invoice via POST /api/merchant/payment { txRef }.
+    InvoiceState checkInvoiceState(const String& reference) override;
+
 private:
     String _base;
     String _key;
