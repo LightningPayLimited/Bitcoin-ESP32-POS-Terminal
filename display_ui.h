@@ -14,6 +14,7 @@ enum class Key {
     DOT, DEL, CLEAR, CHARGE,
     TEST_PRINT,
     MENU,           // top-right menu button on the amount screen
+    CANCEL,         // cancel button on the invoice (QR) screen
 };
 
 class DisplayUI {

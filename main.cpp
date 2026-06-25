@@ -890,8 +890,9 @@ void loop() {
             }
         }
 
-        // Cancel on touch
-        if (ui.anyTouch()) {
+        // Cancel only via the on-screen Cancel button — a stray tap elsewhere
+        // (or a customer brushing the screen) no longer closes the invoice.
+        if (ui.pollTouch() == Key::CANCEL) {
             Serial.println("[POS] Cancelled");
             resetToIdle();
         }

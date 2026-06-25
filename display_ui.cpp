@@ -32,6 +32,20 @@
 #define MENU_X     (SCREEN_WIDTH - MENU_W - 8)
 #define MENU_Y     ((HDR_H - MENU_H) / 2)
 
+// Cancel button on the invoice (QR) screen — the only way to cancel a sale,
+// so a mistap elsewhere on the screen no longer closes it. Sits below the
+// timer band (updateTimer only clears y 658..732).
+#define CANCEL_W   220
+#define CANCEL_H   52
+#define CANCEL_X   ((SCREEN_WIDTH - CANCEL_W) / 2)
+#define CANCEL_Y   742
+
+// Extra touch slop for the small buttons that sit in the screen's top/bottom
+// extremes, beyond the touch-calibration range. The hit area extends past the
+// drawn button (mostly downward) so the whole button is comfortably tappable.
+#define TPAD_UP    14
+#define TPAD_DN    24
+
 // --- Transaction history screen ---
 // Back button (top-left of the header)
 #define BACK_W     78
@@ -396,20 +410,25 @@ void DisplayUI::showQR(const String& bolt11, uint64_t sats, float nzd,
 
     updateTimer(secsLeft, refreshCount);
 
-    drawCenteredText("Tap to cancel", SCREEN_WIDTH / 2, SCREEN_HEIGHT - 30, 2, COL_DIM, COL_BG);
+    // Cancel button (only this cancels — mistaps elsewhere are ignored).
+    _gfx->fillRoundRect(CANCEL_X, CANCEL_Y, CANCEL_W, CANCEL_H, 10, COL_KEYPAD_BG);
+    _gfx->drawRoundRect(CANCEL_X, CANCEL_Y, CANCEL_W, CANCEL_H, 10, COL_ERROR);
+    drawCenteredText("Cancel", SCREEN_WIDTH / 2, CANCEL_Y + CANCEL_H / 2, 3,
+                     COL_ERROR, COL_KEYPAD_BG);
 }
 
 void DisplayUI::updateTimer(int secsLeft, int refreshCount) {
-    _gfx->fillRect(0, 665, SCREEN_WIDTH, 80, COL_BG);
+    // Clear only down to 732 so the Cancel button (y 742+) is never touched.
+    _gfx->fillRect(0, 658, SCREEN_WIDTH, 74, COL_BG);
 
     char t[8]; snprintf(t, sizeof(t), ":%02d", secsLeft);
-    drawCenteredText(t, SCREEN_WIDTH / 2, 690, 4,
+    drawCenteredText(t, SCREEN_WIDTH / 2, 684, 4,
                      secsLeft < 10 ? COL_ERROR : COL_FG, COL_BG);
 
     if (refreshCount > 0) {
         char r[32];
         snprintf(r, sizeof(r), "refresh %d/%d", refreshCount, MAX_INVOICE_REFRESHES);
-        drawCenteredText(r, SCREEN_WIDTH / 2, 740, 2, COL_DIM, COL_BG);
+        drawCenteredText(r, SCREEN_WIDTH / 2, 716, 2, COL_DIM, COL_BG);
     }
 }
 
@@ -693,12 +712,12 @@ DisplayUI::HistEvent DisplayUI::pollTransactionHistory(const HistoryData& d,
     _wasTouched = true;
     _lastTouch  = millis();
 
-    // Back button.
-    if (tx >= BACK_X && tx < BACK_X + BACK_W && ty >= BACK_Y && ty < BACK_Y + BACK_H)
+    // Back button (top-left corner) — extend down toward, but not into, the tabs.
+    if (tx < BACK_X + BACK_W + 14 && ty < BACK_Y + BACK_H + 8)
         return HistEvent::BACK;
 
-    // Timeframe tabs.
-    if (ty >= TAB_Y && ty < TAB_Y + TAB_H) {
+    // Timeframe tabs — a little slop below (the summary line is non-interactive).
+    if (ty >= TAB_Y && ty < TAB_Y + TAB_H + 16) {
         for (int i = 0; i < TAB_COUNT; i++) {
             int x = TAB_X(i);
             if (tx >= x && tx < x + TAB_W) {
@@ -712,8 +731,8 @@ DisplayUI::HistEvent DisplayUI::pollTransactionHistory(const HistoryData& d,
         }
     }
 
-    // Scroll buttons.
-    if (ty >= SCR_Y && ty < SCR_Y + SCR_H) {
+    // Scroll buttons — extend down to the screen edge (rows sit just above).
+    if (ty >= SCR_Y && ty < SCR_Y + SCR_H + TPAD_DN) {
         if (tx >= SCR_PREV_X && tx < SCR_PREV_X + SCR_BTN_W && _histPage > 0) {
             _histPage--;
             showTransactionHistory(d, currency);
@@ -759,8 +778,10 @@ Key DisplayUI::pollTouch() {
         Serial.printf("[TOUCH] raw=%ld,%ld  scr=%u,%u\n",
                       (long)gt911LastRawX(), (long)gt911LastRawY(), tx, ty);
         if (_screen == Screen::AMOUNT_ENTRY) {
-            if (tx >= MENU_X && tx < MENU_X + MENU_W &&
-                ty >= MENU_Y && ty < MENU_Y + MENU_H) {
+            // Generous hit area: the button is small and above the touch
+            // calibration range, and the whole top-right header corner is
+            // otherwise dead space (amount box starts at y=70).
+            if (tx >= MENU_X - 14 && ty < MENU_Y + MENU_H + TPAD_DN) {
                 return Key::MENU;
             }
             Key k = hitTest(tx, ty);
@@ -771,6 +792,12 @@ Key DisplayUI::pollTouch() {
             if (tx >= TP_X && tx < TP_X + TP_W &&
                 ty >= TP_Y && ty < TP_Y + TP_H) {
                 return Key::TEST_PRINT;
+            }
+        }
+        if (_screen == Screen::QR_DISPLAY) {
+            if (tx >= CANCEL_X - 14 && tx < CANCEL_X + CANCEL_W + 14 &&
+                ty >= CANCEL_Y - TPAD_UP && ty < CANCEL_Y + CANCEL_H + TPAD_DN) {
+                return Key::CANCEL;
             }
         }
     }
