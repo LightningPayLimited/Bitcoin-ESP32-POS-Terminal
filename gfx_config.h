@@ -22,8 +22,10 @@ inline Arduino_GFX* createDSIDisplay() {
         34000000 /* pixel clock */,
         500      /* lane bit rate Mbps */);
 
+    // Pass the NATIVE panel resolution (PANEL_W x PANEL_H); rotation 1/3 makes
+    // the logical canvas landscape (gfx->width()==SCREEN_WIDTH==800).
     return new Arduino_DSI_Display(
-        SCREEN_WIDTH, SCREEN_HEIGHT, bus,
+        PANEL_W, PANEL_H, bus,
         SCREEN_ROTATION, true,
         LCD_RST_PIN,
         st7701_dsi_init_operations,
@@ -37,11 +39,11 @@ inline void panelPowerOn() {
 
 // ---- Touch: TAMC_GT911 wrapper ----
 inline TAMC_GT911& touch() {
-    // Panel reports touches in native orientation (800 wide × 480 tall
-    // landscape, per ESPHome). We rotate to portrait in gt911ReadTouch().
+    // Construct with the panel's native touch frame (800 wide × 480 tall).
+    // We read raw points and map them ourselves in gt911ReadTouch().
     static TAMC_GT911 ts(I2C_SDA_PIN, I2C_SCL_PIN,
                          TOUCH_INT_PIN, TOUCH_RST_PIN,
-                         SCREEN_HEIGHT, SCREEN_WIDTH);
+                         PANEL_H, PANEL_W);
     return ts;
 }
 
@@ -61,14 +63,14 @@ inline volatile uint8_t& gt911LastStatus() { static volatile uint8_t s = 0; retu
 inline volatile int32_t& gt911LastRawX() { static volatile int32_t v = 0; return v; }
 inline volatile int32_t& gt911LastRawY() { static volatile int32_t v = 0; return v; }
 
-// Hardcoded calibration for this JC4880P443. Values extended beyond the
-// observed touch extremes so edge taps at the very bottom/right of the
-// screen still resolve inside button hit regions rather than off-grid.
+// Landscape calibration. After the optional axis swap (TOUCH_SWAP_XY), the
+// "X source" raw value maps to screen X via [xRaw0..xRaw1] -> [0..W-1], and
+// likewise the "Y source" via [yRaw0..yRaw1] -> [0..H-1]. Endpoints come from
+// the panel's observed raw extremes; TOUCH_INVERT_X/_Y flip a screen axis if
+// the device's physical orientation runs the other way.
 struct TouchCalib {
-    int32_t rawTLx = 800, rawTLy = 490;
-    int32_t rawBRx = 340, rawBRy = -310;
-    int32_t scrTLx = 0,   scrTLy = 0;
-    int32_t scrBRx = SCREEN_WIDTH - 1, scrBRy = SCREEN_HEIGHT - 1;
+    int32_t xRaw0 = 490,  xRaw1 = -310;   // X source raw at screen left .. right
+    int32_t yRaw0 = 800,  yRaw1 = 340;    // Y source raw at screen top  .. bottom
     bool   done = true;
 };
 inline TouchCalib& touchCalib() { static TouchCalib c; return c; }
@@ -79,8 +81,7 @@ inline bool gt911ReadTouch(uint16_t* outX, uint16_t* outY) {
     if (!ts.isTouched || ts.touches == 0) return false;
 
     // Chip reports signed int16 but the library stores them as uint16.
-    // Cast to int16_t so bottom-half Y values (which go negative) decode.
-    // NO swap — chip's axes already align with portrait screen.
+    // Cast to int16_t so values that go negative decode correctly.
     int32_t rawX = (int16_t)ts.points[0].x;
     int32_t rawY = (int16_t)ts.points[0].y;
 
@@ -88,22 +89,25 @@ inline bool gt911ReadTouch(uint16_t* outX, uint16_t* outY) {
     gt911LastRawY() = rawY;
     gt911LastStatus() = 0x81;
 
+#if TOUCH_SWAP_XY
+    int32_t xSrc = rawY, ySrc = rawX;   // landscape: raw Y drives screen X
+#else
+    int32_t xSrc = rawX, ySrc = rawY;
+#endif
+
     auto& c = touchCalib();
-    if (!c.done) {
-        *outX = rawX < 0 ? 0 : (rawX > 65535 ? 65535 : (uint16_t)rawX);
-        *outY = rawY < 0 ? 0 : (rawY > 65535 ? 65535 : (uint16_t)rawY);
-        return true;
-    }
+    int32_t dxRaw = c.xRaw1 - c.xRaw0; if (dxRaw == 0) dxRaw = 1;
+    int32_t dyRaw = c.yRaw1 - c.yRaw0; if (dyRaw == 0) dyRaw = 1;
 
-    int32_t dxRaw = c.rawBRx - c.rawTLx;
-    int32_t dyRaw = c.rawBRy - c.rawTLy;
-    int32_t dxScr = c.scrBRx - c.scrTLx;
-    int32_t dyScr = c.scrBRy - c.scrTLy;
-    if (dxRaw == 0) dxRaw = 1;
-    if (dyRaw == 0) dyRaw = 1;
+    int32_t sx = (xSrc - c.xRaw0) * (SCREEN_WIDTH  - 1) / dxRaw;
+    int32_t sy = (ySrc - c.yRaw0) * (SCREEN_HEIGHT - 1) / dyRaw;
 
-    int32_t sx = c.scrTLx + (rawX - c.rawTLx) * dxScr / dxRaw;
-    int32_t sy = c.scrTLy + (rawY - c.rawTLy) * dyScr / dyRaw;
+#if TOUCH_INVERT_X
+    sx = (SCREEN_WIDTH  - 1) - sx;
+#endif
+#if TOUCH_INVERT_Y
+    sy = (SCREEN_HEIGHT - 1) - sy;
+#endif
 
     if (sx < 0) sx = 0; if (sx >= SCREEN_WIDTH)  sx = SCREEN_WIDTH - 1;
     if (sy < 0) sy = 0; if (sy >= SCREEN_HEIGHT) sy = SCREEN_HEIGHT - 1;

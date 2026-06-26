@@ -2,29 +2,32 @@
 #include "config.h"
 #include "setup_portal.h"
 #include "logo.h"
-#include "splash_image.h"
 #include "pos_fonts.h"
 #include <qrcode.h>
 
 // ============================================================
-// Layout constants — 480x800 portrait
+// Layout constants — 800x480 landscape (device mounted on its right side)
 // ============================================================
-#define HDR_H      50
-#define AMT_BOX_Y  70
-#define AMT_BOX_H  90
-#define KP_X0      15
-#define KP_Y0      190
+#define HDR_H      46
+
+// Amount entry: amount panel on the left, keypad on the right.
+#define AMT_BOX_X  12
+#define AMT_BOX_W  376
+#define AMT_BOX_Y  175
+#define AMT_BOX_H  120
+#define KP_X0      400
+#define KP_Y0      54
 #define KP_COLS    4
 #define KP_ROWS    4
-#define KP_BW      110
-#define KP_BH      130
-#define KP_GAP     7
+#define KP_BW      93
+#define KP_BH      100
+#define KP_GAP     6
 
 // Test Print button on the SETUP_INFO screen
-#define TP_X       60
-#define TP_Y       700
-#define TP_W       360
-#define TP_H       70
+#define TP_W       300
+#define TP_H       60
+#define TP_X       ((SCREEN_WIDTH - TP_W) / 2)
+#define TP_Y       400
 
 // Menu button in the top-right of the amount-entry header (opens history)
 #define MENU_W     54
@@ -32,17 +35,15 @@
 #define MENU_X     (SCREEN_WIDTH - MENU_W - 8)
 #define MENU_Y     ((HDR_H - MENU_H) / 2)
 
-// Cancel button on the invoice (QR) screen — the only way to cancel a sale,
-// so a mistap elsewhere on the screen no longer closes it. Sits below the
-// timer band (updateTimer only clears y 658..732).
-#define CANCEL_W   220
-#define CANCEL_H   52
-#define CANCEL_X   ((SCREEN_WIDTH - CANCEL_W) / 2)
-#define CANCEL_Y   742
+// Cancel button — lives in the right-hand details column of the QR screen.
+// The only way to cancel a sale, so a mistap elsewhere can't close it.
+#define CANCEL_W   300
+#define CANCEL_X   478
+#define CANCEL_Y   404
+#define CANCEL_H   58
 
-// Extra touch slop for the small buttons that sit in the screen's top/bottom
-// extremes, beyond the touch-calibration range. The hit area extends past the
-// drawn button (mostly downward) so the whole button is comfortably tappable.
+// Extra touch slop for small buttons near the screen edges (beyond the touch
+// calibration range). The hit area extends past the drawn button.
 #define TPAD_UP    14
 #define TPAD_DN    24
 
@@ -54,32 +55,32 @@
 #define BACK_Y     ((HDR_H - BACK_H) / 2)
 
 // Timeframe tabs (4 across, just under the header)
-#define TAB_Y      54
-#define TAB_H      44
+#define TAB_Y      52
+#define TAB_H      42
 #define TAB_MARGIN 8
 #define TAB_GAP    6
 #define TAB_W      ((SCREEN_WIDTH - 2 * TAB_MARGIN - 3 * TAB_GAP) / 4)
 #define TAB_COUNT  4
 #define TAB_X(i)   (TAB_MARGIN + (i) * (TAB_W + TAB_GAP))
 
-// Transaction list area
-#define TXL_TOP    140
-#define TXL_BOTTOM 744
-#define TXL_ROW_H  58
-#define TXL_XL     18
-#define TXL_XR     (SCREEN_WIDTH - 18)
+// Transaction list area — single-line rows across the wide screen.
+#define TXL_TOP    124
+#define TXL_BOTTOM 428
+#define TXL_ROW_H  50
+#define TXL_XL     16
+#define TXL_XR     (SCREEN_WIDTH - 16)
 
 // Per-row "Check" button (re-checks live invoice status)
-#define CHK_W      98
+#define CHK_W      92
 #define CHK_H      40
-#define CHK_X      (SCREEN_WIDTH - 18 - CHK_W)
+#define CHK_X      (SCREEN_WIDTH - 16 - CHK_W)
 #define CHK_YOFF   ((TXL_ROW_H - CHK_H) / 2)   // y within a row
 // Left content stops just before the Check button.
 #define TXL_XR2    (CHK_X - 12)
 
 // Scroll footer (prev / page indicator / next)
-#define SCR_Y      750
-#define SCR_H      44
+#define SCR_Y      434
+#define SCR_H      42
 #define SCR_PREV_X 8
 #define SCR_NEXT_X (SCREEN_WIDTH - 128)
 #define SCR_BTN_W  120
@@ -167,15 +168,20 @@ void DisplayUI::calibrateTouch() {
         }
     }
 
+    // Map the two corner taps to the landscape calibration endpoints. The TL
+    // tap is screen (0,0), the BR tap is (W-1,H-1). With TOUCH_SWAP_XY the raw
+    // Y drives screen X (and raw X drives screen Y).
     auto& c = touchCalib();
-    c.rawTLx = raw[0][0]; c.rawTLy = raw[0][1];
-    c.rawBRx = raw[1][0]; c.rawBRy = raw[1][1];
-    c.scrTLx = targets[0][0]; c.scrTLy = targets[0][1];
-    c.scrBRx = targets[1][0]; c.scrBRy = targets[1][1];
+#if TOUCH_SWAP_XY
+    c.xRaw0 = raw[0][1]; c.xRaw1 = raw[1][1];   // screen X <- raw Y
+    c.yRaw0 = raw[0][0]; c.yRaw1 = raw[1][0];   // screen Y <- raw X
+#else
+    c.xRaw0 = raw[0][0]; c.xRaw1 = raw[1][0];
+    c.yRaw0 = raw[0][1]; c.yRaw1 = raw[1][1];
+#endif
     c.done = true;
-    Serial.printf("[CAL] done TL=(%ld,%ld)->(%ld,%ld) BR=(%ld,%ld)->(%ld,%ld)\n",
-                  (long)c.rawTLx, (long)c.rawTLy, (long)c.scrTLx, (long)c.scrTLy,
-                  (long)c.rawBRx, (long)c.rawBRy, (long)c.scrBRx, (long)c.scrBRy);
+    Serial.printf("[CAL] done xRaw[%ld..%ld] yRaw[%ld..%ld]\n",
+                  (long)c.xRaw0, (long)c.xRaw1, (long)c.yRaw0, (long)c.yRaw1);
 }
 
 void DisplayUI::begin() {
@@ -255,15 +261,15 @@ void DisplayUI::showSplash(const String& merchantName) {
 
     // Lightning Pay wordmark (white text + gold bolt) centred on black.
     int logoX = (SCREEN_WIDTH - LOGO_W) / 2;
-    int logoY = 310;
+    int logoY = 150;
     _gfx->draw16bitRGBBitmap(logoX, logoY, LOGO_RGB565, LOGO_W, LOGO_H);
 
-    drawCenteredText("Bitcoin Point of Sale", SCREEN_WIDTH / 2, 420, 2, COL_FG, COL_BG);
+    drawCenteredText("Bitcoin Point of Sale", SCREEN_WIDTH / 2, 260, 2, COL_FG, COL_BG);
 
     if (merchantName.length() > 0) {
-        drawCenteredText(merchantName, SCREEN_WIDTH / 2, 480, 2, COL_DIM, COL_BG);
+        drawCenteredText(merchantName, SCREEN_WIDTH / 2, 305, 2, COL_DIM, COL_BG);
     }
-    drawCenteredText("Lightning Network", SCREEN_WIDTH / 2, 560, 2, COL_ACCENT, COL_BG);
+    drawCenteredText("Lightning Network", SCREEN_WIDTH / 2, 360, 2, COL_ACCENT, COL_BG);
 }
 
 void DisplayUI::showSetupInfo() {
@@ -273,21 +279,18 @@ void DisplayUI::showSetupInfo() {
     _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ACCENT);
 
     // Lightning Pay wordmark at the top.
-    _gfx->draw16bitRGBBitmap((SCREEN_WIDTH - LOGO_W) / 2, 30, LOGO_RGB565, LOGO_W, LOGO_H);
+    _gfx->draw16bitRGBBitmap((SCREEN_WIDTH - LOGO_W) / 2, 14, LOGO_RGB565, LOGO_W, LOGO_H);
 
-    drawCenteredText("POS SETUP", SCREEN_WIDTH / 2, 135, 4, COL_ACCENT, COL_BG);
+    drawCenteredText("POS SETUP", SCREEN_WIDTH / 2, 92, 4, COL_ACCENT, COL_BG);
 
-    drawCenteredText("Connect to WiFi:", SCREEN_WIDTH / 2, 220, 2, COL_FG, COL_BG);
-    drawCenteredText(SetupPortal::apSSID(), SCREEN_WIDTH / 2, 280, 3, COL_ACCENT, COL_BG);
+    drawCenteredText("Connect to WiFi:", SCREEN_WIDTH / 2, 138, 2, COL_FG, COL_BG);
+    drawCenteredText(SetupPortal::apSSID(), SCREEN_WIDTH / 2, 170, 3, COL_ACCENT, COL_BG);
 
-    drawCenteredText("Then open browser to:", SCREEN_WIDTH / 2, 400, 2, COL_FG, COL_BG);
-    drawCenteredText(SETUP_AP_IP,             SCREEN_WIDTH / 2, 460, 3, COL_ACCENT, COL_BG);
+    drawCenteredText("Then open browser to:", SCREEN_WIDTH / 2, 212, 2, COL_FG, COL_BG);
+    drawCenteredText(SETUP_AP_IP,             SCREEN_WIDTH / 2, 244, 3, COL_ACCENT, COL_BG);
 
     // NFC diagnostic band (overwritten by showNfcTap on each card tap).
-    drawCenteredText("Tap NFC card to test", SCREEN_WIDTH / 2, 537, 2, COL_DIM, COL_BG);
-
-    drawCenteredText("Enter WiFi details",       SCREEN_WIDTH / 2, 600, 2, COL_DIM, COL_BG);
-    drawCenteredText("and merchant API key",     SCREEN_WIDTH / 2, 640, 2, COL_DIM, COL_BG);
+    drawCenteredText("Tap NFC card to test", SCREEN_WIDTH / 2, 318, 2, COL_DIM, COL_BG);
 
     // Test Print button — exercise the thermal printer without a real sale
     _gfx->fillRoundRect(TP_X, TP_Y, TP_W, TP_H, 10, COL_KEYPAD_BG);
@@ -296,11 +299,11 @@ void DisplayUI::showSetupInfo() {
                      3, COL_ACCENT, COL_KEYPAD_BG);
 }
 
-// Diagnostic readout for NFC bench testing: fills the band between the setup
-// screen's browser-IP line and the instructions with the last tap's UID (and
-// a truncated NDEF URL), so a reader can be tested without a serial monitor.
+// Diagnostic readout for NFC bench testing: fills the band below the setup
+// screen's browser-IP line with the last tap's UID (and a truncated NDEF URL),
+// so a reader can be tested without a serial monitor.
 void DisplayUI::showNfcTap(const String& uid, const String& url, int count) {
-    const int top = 488, h = 100;
+    const int top = 288, h = 90;
     _gfx->fillRect(0, top, SCREEN_WIDTH, h, COL_BG);
 
     char hdr[24];
@@ -327,11 +330,14 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
         _gfx->fillScreen(COL_BG);
         drawHeader("Lightning Pay");
         drawMenuButton();
+        // Left-panel label above the amount box (static).
+        drawCenteredText("Enter amount", AMT_BOX_X + AMT_BOX_W / 2, 130, 2,
+                         COL_DIM, COL_BG);
     }
 
-    // Amount box (redraws the box fill → wipes the previous amount text)
-    _gfx->fillRoundRect(15, AMT_BOX_Y, SCREEN_WIDTH - 30, AMT_BOX_H, 8, COL_KEYPAD_BG);
-    _gfx->drawRoundRect(15, AMT_BOX_Y, SCREEN_WIDTH - 30, AMT_BOX_H, 8, COL_ACCENT);
+    // Amount box on the left panel (redraw wipes the previous amount text).
+    _gfx->fillRoundRect(AMT_BOX_X, AMT_BOX_Y, AMT_BOX_W, AMT_BOX_H, 8, COL_KEYPAD_BG);
+    _gfx->drawRoundRect(AMT_BOX_X, AMT_BOX_Y, AMT_BOX_W, AMT_BOX_H, 8, COL_ACCENT);
 
     String disp = amount.isEmpty() ? "0.00" : amount;
     String right = disp + " " + currency;
@@ -344,12 +350,12 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
     applyPosFont(_gfx, 4);
     _gfx->setTextColor(COL_ACCENT, COL_KEYPAD_BG);
     _gfx->getTextBounds("$", 0, 0, &x1, &y1, &w, &h);
-    _gfx->setCursor(30 - x1, boxCy - h / 2 - y1);
+    _gfx->setCursor(AMT_BOX_X + 16 - x1, boxCy - h / 2 - y1);
     _gfx->print("$");
 
     _gfx->setTextColor(COL_FG, COL_KEYPAD_BG);
     _gfx->getTextBounds(right.c_str(), 0, 0, &x1, &y1, &w, &h);
-    _gfx->setCursor(SCREEN_WIDTH - 30 - w - x1, boxCy - h / 2 - y1);
+    _gfx->setCursor(AMT_BOX_X + AMT_BOX_W - 16 - w - x1, boxCy - h / 2 - y1);
     _gfx->print(right);
 
     // Keypad — static between keystrokes, only paint on first entry.
@@ -376,59 +382,61 @@ void DisplayUI::showLoading(const String& message) {
     _screen = Screen::LOADING;
     _gfx->fillScreen(COL_BG);
     drawHeader("Lightning Pay");
-    drawCenteredText(message, SCREEN_WIDTH / 2, 380, 3, COL_FG, COL_BG);
-    drawCenteredText(". . .", SCREEN_WIDTH / 2, 450, 3, COL_ACCENT, COL_BG);
+    drawCenteredText(message, SCREEN_WIDTH / 2, 210, 3, COL_FG, COL_BG);
+    drawCenteredText(". . .", SCREEN_WIDTH / 2, 280, 3, COL_ACCENT, COL_BG);
 }
+
+// Right-hand details column on the QR screen.
+#define QR_RC_CX   636
 
 void DisplayUI::showQR(const String& bolt11, uint64_t sats, float nzd,
                        int secsLeft, int refreshCount) {
     _screen = Screen::QR_DISPLAY;
     _gfx->fillScreen(COL_BG);
 
-    // Amount at top
-    if (nzd > 0) {
-        char s[16]; snprintf(s, sizeof(s), "$%.2f NZD", nzd);
-        drawCenteredText(s, SCREEN_WIDTH / 2, 30, 4, COL_ACCENT, COL_BG);
-    }
-
-    // QR in middle
+    // QR on the left.
     int qrSize = 440;
-    int qrX = (SCREEN_WIDTH - qrSize) / 2;
-    int qrY = 80;
+    int qrX = 16;
+    int qrY = 20;
     String qrData = bolt11;
     qrData.toUpperCase();
     drawQRCode(qrData, qrX, qrY, qrSize);
 
-    // Info under QR
+    // Details column on the right.
+    if (nzd > 0) {
+        char s[16]; snprintf(s, sizeof(s), "$%.2f NZD", nzd);
+        drawCenteredText(s, QR_RC_CX, 52, 4, COL_ACCENT, COL_BG);
+    }
     char satStr[32]; snprintf(satStr, sizeof(satStr), "%lu sats", (unsigned long)sats);
-    drawCenteredText(satStr, SCREEN_WIDTH / 2, 560, 2, COL_FG, COL_BG);
+    drawCenteredText(satStr, QR_RC_CX, 118, 2, COL_FG, COL_BG);
 
-    _gfx->drawFastHLine(30, 600, SCREEN_WIDTH - 60, COL_DIM);
+    _gfx->drawFastHLine(478, 150, SCREEN_WIDTH - 478 - 14, COL_DIM);
 
-    drawCenteredText("Scan with any Lightning wallet",
-                     SCREEN_WIDTH / 2, 625, 2, COL_FG, COL_BG);
+    drawCenteredText("Scan with any",     QR_RC_CX, 184, 2, COL_FG, COL_BG);
+    drawCenteredText("Lightning wallet",  QR_RC_CX, 214, 2, COL_FG, COL_BG);
 
     updateTimer(secsLeft, refreshCount);
 
     // Cancel button (only this cancels — mistaps elsewhere are ignored).
     _gfx->fillRoundRect(CANCEL_X, CANCEL_Y, CANCEL_W, CANCEL_H, 10, COL_KEYPAD_BG);
     _gfx->drawRoundRect(CANCEL_X, CANCEL_Y, CANCEL_W, CANCEL_H, 10, COL_ERROR);
-    drawCenteredText("Cancel", SCREEN_WIDTH / 2, CANCEL_Y + CANCEL_H / 2, 3,
+    drawCenteredText("Cancel", CANCEL_X + CANCEL_W / 2, CANCEL_Y + CANCEL_H / 2, 3,
                      COL_ERROR, COL_KEYPAD_BG);
 }
 
 void DisplayUI::updateTimer(int secsLeft, int refreshCount) {
-    // Clear only down to 732 so the Cancel button (y 742+) is never touched.
-    _gfx->fillRect(0, 658, SCREEN_WIDTH, 74, COL_BG);
+    // Clear only the right-column timer band (x 472+, y 268..390) so the QR,
+    // the details above, and the Cancel button below are never touched.
+    _gfx->fillRect(472, 268, SCREEN_WIDTH - 472, 122, COL_BG);
 
     char t[8]; snprintf(t, sizeof(t), ":%02d", secsLeft);
-    drawCenteredText(t, SCREEN_WIDTH / 2, 684, 4,
+    drawCenteredText(t, QR_RC_CX, 305, 7,
                      secsLeft < 10 ? COL_ERROR : COL_FG, COL_BG);
 
     if (refreshCount > 0) {
         char r[32];
         snprintf(r, sizeof(r), "refresh %d/%d", refreshCount, MAX_INVOICE_REFRESHES);
-        drawCenteredText(r, SCREEN_WIDTH / 2, 716, 2, COL_DIM, COL_BG);
+        drawCenteredText(r, QR_RC_CX, 360, 2, COL_DIM, COL_BG);
     }
 }
 
@@ -439,21 +447,21 @@ void DisplayUI::showPaid(uint64_t sats, float nzd, const String& currency) {
     int cx = SCREEN_WIDTH / 2;
 
     int logoX = (SCREEN_WIDTH - LOGO_W) / 2;
-    int logoY = 60;
+    int logoY = 64;
     _gfx->draw16bitRGBBitmap(logoX, logoY, LOGO_RGB565, LOGO_W, LOGO_H);
 
-    drawCenteredText("PAID", cx, 380, 7, COL_ACCENT, COL_BG);
+    drawCenteredText("PAID", cx, 210, 7, COL_ACCENT, COL_BG);
 
     char info[64];
     if (nzd > 0) snprintf(info, sizeof(info), "$%.2f %s", nzd, currency.c_str());
     else         snprintf(info, sizeof(info), "%lu sats", (unsigned long)sats);
-    drawCenteredText(info, cx, 490, 3, COL_FG, COL_BG);
+    drawCenteredText(info, cx, 300, 3, COL_FG, COL_BG);
     if (nzd > 0) {
         char s[32]; snprintf(s, sizeof(s), "%lu sats", (unsigned long)sats);
-        drawCenteredText(s, cx, 540, 2, COL_DIM, COL_BG);
+        drawCenteredText(s, cx, 345, 2, COL_DIM, COL_BG);
     }
 
-    drawCenteredText("Tap to continue", cx, SCREEN_HEIGHT - 30, 2, COL_DIM, COL_BG);
+    drawCenteredText("Tap to continue", cx, SCREEN_HEIGHT - 28, 2, COL_DIM, COL_BG);
 }
 
 void DisplayUI::showWifiError(const String& ssid) {
@@ -463,18 +471,22 @@ void DisplayUI::showWifiError(const String& ssid) {
     _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ERROR);
 
     int cx = SCREEN_WIDTH / 2;
-    drawCenteredText("WiFi Failed", cx, 220, 5, COL_ERROR, COL_BG);
+    drawCenteredText("WiFi Failed", cx, 130, 5, COL_ERROR, COL_BG);
     if (ssid.length() > 0) {
-        drawCenteredText("SSID: " + ssid, cx, 320, 2, COL_DIM, COL_BG);
+        drawCenteredText("SSID: " + ssid, cx, 210, 2, COL_DIM, COL_BG);
     }
-    drawCenteredText("Retrying...", cx, 400, 3, COL_FG, COL_BG);
-    drawCenteredText("Hold reset button", cx, 540, 2, COL_DIM, COL_BG);
-    drawCenteredText("to reconfigure WiFi", cx, 580, 2, COL_DIM, COL_BG);
+    drawCenteredText("Retrying...", cx, 270, 3, COL_FG, COL_BG);
+    drawCenteredText("Hold reset button to reconfigure WiFi",
+                     cx, 370, 2, COL_DIM, COL_BG);
 }
 
 void DisplayUI::showScreensaver() {
+    // No full-screen bitmap in landscape — draw a simple branded idle screen.
     _screen = Screen::SCREENSAVER;
-    _gfx->draw16bitRGBBitmap(0, 0, SPLASH_RGB565, SPLASH_W, SPLASH_H);
+    _gfx->fillScreen(COL_BG);
+    _gfx->draw16bitRGBBitmap((SCREEN_WIDTH - LOGO_W) / 2, 170,
+                             LOGO_RGB565, LOGO_W, LOGO_H);
+    drawCenteredText("Tap to begin", SCREEN_WIDTH / 2, 300, 2, COL_DIM, COL_BG);
 }
 
 void DisplayUI::showError(const String& message) {
@@ -482,35 +494,31 @@ void DisplayUI::showError(const String& message) {
     _gfx->fillScreen(COL_BG);
 
     int cx = SCREEN_WIDTH / 2;
-    int cy = 230;
+    int cy = 130;
 
-    _gfx->fillCircle(cx, cy, 70, COL_ERROR);
+    _gfx->fillCircle(cx, cy, 60, COL_ERROR);
     for (int i = -3; i <= 3; i++) {
-        _gfx->drawLine(cx - 26 + i, cy - 26, cx + 26 + i, cy + 26, COL_BG);
-        _gfx->drawLine(cx + 26 + i, cy - 26, cx - 26 + i, cy + 26, COL_BG);
+        _gfx->drawLine(cx - 24 + i, cy - 24, cx + 24 + i, cy + 24, COL_BG);
+        _gfx->drawLine(cx + 24 + i, cy - 24, cx - 24 + i, cy + 24, COL_BG);
     }
 
-    drawCenteredText("ERROR", cx, 370, 5, COL_ERROR, COL_BG);
+    drawCenteredText("ERROR", cx, 240, 5, COL_ERROR, COL_BG);
 
-    // Word-wrap to up to 3 lines (use the same font we'll draw with)
+    // Word-wrap to up to 2 lines (use the same font we'll draw with)
     applyPosFont(_gfx, 2);
     int16_t x1, y1; uint16_t w, h;
     _gfx->getTextBounds(message.c_str(), 0, 0, &x1, &y1, &w, &h);
-    if ((int)w > SCREEN_WIDTH - 40) {
-        int len = message.length();
-        int third = len / 3;
-        int sp1 = message.indexOf(' ', third);
-        int sp2 = message.indexOf(' ', 2 * third);
-        if (sp1 < 0) sp1 = third;
-        if (sp2 < 0) sp2 = 2 * third;
-        drawCenteredText(message.substring(0, sp1),        cx, 460, 2, COL_FG, COL_BG);
-        drawCenteredText(message.substring(sp1 + 1, sp2),  cx, 495, 2, COL_FG, COL_BG);
-        drawCenteredText(message.substring(sp2 + 1),       cx, 530, 2, COL_FG, COL_BG);
+    if ((int)w > SCREEN_WIDTH - 80) {
+        int half = message.length() / 2;
+        int sp = message.indexOf(' ', half);
+        if (sp < 0) sp = half;
+        drawCenteredText(message.substring(0, sp),     cx, 310, 2, COL_FG, COL_BG);
+        drawCenteredText(message.substring(sp + 1),    cx, 345, 2, COL_FG, COL_BG);
     } else {
-        drawCenteredText(message, cx, 480, 2, COL_FG, COL_BG);
+        drawCenteredText(message, cx, 320, 2, COL_FG, COL_BG);
     }
 
-    drawCenteredText("Tap to retry", cx, SCREEN_HEIGHT - 30, 2, COL_DIM, COL_BG);
+    drawCenteredText("Tap to retry", cx, SCREEN_HEIGHT - 28, 2, COL_DIM, COL_BG);
 }
 
 // ============================================================
@@ -615,8 +623,8 @@ void DisplayUI::showTransactionHistory(const HistoryData& d,
     char summary[64];
     snprintf(summary, sizeof(summary), "%d txns  -  %d paid  -  $%.2f %s",
              count, paidCount, paidNzd, currency.c_str());
-    drawCenteredText(summary, SCREEN_WIDTH / 2, 118, 2, COL_ACCENT, COL_BG);
-    _gfx->drawFastHLine(TXL_XL, 134, SCREEN_WIDTH - 2 * TXL_XL, COL_DIM);
+    drawCenteredText(summary, SCREEN_WIDTH / 2, 104, 2, COL_ACCENT, COL_BG);
+    _gfx->drawFastHLine(TXL_XL, 118, SCREEN_WIDTH - 2 * TXL_XL, COL_DIM);
 
     // --- Clamp page + slice ---
     int rpp = historyRowsPerPage();
@@ -648,22 +656,20 @@ void DisplayUI::showTransactionHistory(const HistoryData& d,
         char money[16];
         snprintf(money, sizeof(money), "$%.2f", r.nzdAmount);
 
-        // Left: date over amount. Right of that (before the button): the
-        // recorded paid state + sats. Far right: the Check button.
-        drawLeftAt(_gfx, when, TXL_XL, ry + 4, 2, COL_FG, COL_BG);
-        if (r.isPaid)
-            drawRightAt(_gfx, "paid", TXL_XR2, ry + 6, 1, COL_SUCCESS, COL_BG);
-        else
-            drawRightAt(_gfx, "unpaid", TXL_XR2, ry + 6, 1, COL_DIM, COL_BG);
-
-        drawLeftAt(_gfx, money, TXL_XL, ry + 30, 2, COL_ACCENT, COL_BG);
+        // Single wide line: date | amount | sats | paid state | Check button.
+        drawLeftAt (_gfx, when,  TXL_XL, ry + 17, 2, COL_FG,     COL_BG);
+        drawRightAt(_gfx, money, 326,    ry + 17, 2, COL_ACCENT, COL_BG);
         drawRightAt(_gfx, groupInt(r.satAmount) + " sats",
-                    TXL_XR2, ry + 32, 1, COL_DIM, COL_BG);
+                                 500,    ry + 19, 1, COL_DIM,    COL_BG);
+        if (r.isPaid)
+            drawRightAt(_gfx, "paid",   TXL_XR2, ry + 17, 2, COL_SUCCESS, COL_BG);
+        else
+            drawRightAt(_gfx, "unpaid", TXL_XR2, ry + 17, 2, COL_DIM,     COL_BG);
 
         drawCheckButton(ry + CHK_YOFF, "Check", COL_KEYPAD_BG, COL_FG);
 
         if (n < last - 1)
-            _gfx->drawFastHLine(TXL_XL, ry + TXL_ROW_H - 2,
+            _gfx->drawFastHLine(TXL_XL, ry + TXL_ROW_H - 1,
                                 SCREEN_WIDTH - 2 * TXL_XL, 0x1082);
     }
 
@@ -716,8 +722,8 @@ DisplayUI::HistEvent DisplayUI::pollTransactionHistory(const HistoryData& d,
     if (tx < BACK_X + BACK_W + 14 && ty < BACK_Y + BACK_H + 8)
         return HistEvent::BACK;
 
-    // Timeframe tabs — a little slop below (the summary line is non-interactive).
-    if (ty >= TAB_Y && ty < TAB_Y + TAB_H + 16) {
+    // Timeframe tabs — a little slop below, but clear of the summary line.
+    if (ty >= TAB_Y && ty < TAB_Y + TAB_H + 6) {
         for (int i = 0; i < TAB_COUNT; i++) {
             int x = TAB_X(i);
             if (tx >= x && tx < x + TAB_W) {
@@ -778,10 +784,9 @@ Key DisplayUI::pollTouch() {
         Serial.printf("[TOUCH] raw=%ld,%ld  scr=%u,%u\n",
                       (long)gt911LastRawX(), (long)gt911LastRawY(), tx, ty);
         if (_screen == Screen::AMOUNT_ENTRY) {
-            // Generous hit area: the button is small and above the touch
-            // calibration range, and the whole top-right header corner is
-            // otherwise dead space (amount box starts at y=70).
-            if (tx >= MENU_X - 14 && ty < MENU_Y + MENU_H + TPAD_DN) {
+            // Whole top-right of the header is the menu hit area, but it must
+            // stay inside the header band — the keypad sits right below it.
+            if (tx >= MENU_X - 12 && ty < HDR_H) {
                 return Key::MENU;
             }
             Key k = hitTest(tx, ty);
@@ -821,14 +826,19 @@ bool DisplayUI::anyTouch() {
 }
 
 // ============================================================
-// BTCPay store picker
+// BTCPay store picker — 2-column grid for landscape
 // ============================================================
-#define SS_Y0   90
-#define SS_X    20
-#define SS_W    (SCREEN_WIDTH - 40)
-#define SS_H    90
-#define SS_GAP  14
-#define SS_MAX  6   // rows that fit between header and footer
+#define SS_COLS 2
+#define SS_ROWS 3
+#define SS_MAX  (SS_COLS * SS_ROWS)
+#define SS_X0   20
+#define SS_Y0   86
+#define SS_W    372
+#define SS_H    100
+#define SS_GX   16
+#define SS_GY   14
+#define SS_CX(i) (SS_X0 + ((i) % SS_COLS) * (SS_W + SS_GX))
+#define SS_CY(i) (SS_Y0 + ((i) / SS_COLS) * (SS_H + SS_GY))
 
 int DisplayUI::storeSelectCapacity() { return SS_MAX; }
 
@@ -839,18 +849,18 @@ void DisplayUI::showStoreSelect(const String* names, int count) {
 
     int shown = count < SS_MAX ? count : SS_MAX;
     for (int i = 0; i < shown; i++) {
-        int y = SS_Y0 + i * (SS_H + SS_GAP);
-        _gfx->fillRoundRect(SS_X, y, SS_W, SS_H, 10, COL_KEYPAD_BG);
+        int x = SS_CX(i), y = SS_CY(i);
+        _gfx->fillRoundRect(x, y, SS_W, SS_H, 10, COL_KEYPAD_BG);
 
-        // Truncate long names so they don't overrun the row.
+        // Truncate long names so they don't overrun the cell.
         String label = names[i];
         if (label.length() > 18) label = label.substring(0, 17) + "…";
-        drawCenteredText(label, SCREEN_WIDTH / 2, y + SS_H / 2, 3,
+        drawCenteredText(label, x + SS_W / 2, y + SS_H / 2, 3,
                          COL_FG, COL_KEYPAD_BG);
     }
 
     drawCenteredText("Tap your store", SCREEN_WIDTH / 2,
-                     SCREEN_HEIGHT - 28, 2, COL_DIM, COL_BG);
+                     SCREEN_HEIGHT - 26, 2, COL_DIM, COL_BG);
 }
 
 int DisplayUI::pollStoreSelect(int count) {
@@ -862,9 +872,9 @@ int DisplayUI::pollStoreSelect(int count) {
         _lastTouch = millis();
         int shown = count < SS_MAX ? count : SS_MAX;
         for (int i = 0; i < shown; i++) {
-            int y = SS_Y0 + i * (SS_H + SS_GAP);
-            if (tx >= SS_X && tx < SS_X + SS_W && ty >= y && ty < y + SS_H) {
-                Serial.printf("[TOUCH] store row %d\n", i);
+            int x = SS_CX(i), y = SS_CY(i);
+            if (tx >= x && tx < x + SS_W && ty >= y && ty < y + SS_H) {
+                Serial.printf("[TOUCH] store cell %d\n", i);
                 return i;
             }
         }

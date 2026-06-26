@@ -43,9 +43,24 @@
 // Panel driver IC is likely JD9365 (common 480x800 DSI panel).
 // If display stays blank after boot, the driver IC may differ —
 // swap DSI timing + init ops in gfx_config.h accordingly.
-#define SCREEN_WIDTH    480
-#define SCREEN_HEIGHT   800
-#define SCREEN_ROTATION 0
+//
+// LANDSCAPE MODE: the panel is physically 480x800, but the device is mounted
+// on its right side, so the UI runs landscape (800x480). The framebuffer stays
+// native (PANEL_W x PANEL_H); Arduino_GFX rotates the drawing via rotation 1/3.
+#define PANEL_W         480   // native panel width  (framebuffer)
+#define PANEL_H         800   // native panel height (framebuffer)
+#define SCREEN_WIDTH    800   // logical (landscape) canvas — used by all layout
+#define SCREEN_HEIGHT   480
+#define SCREEN_ROTATION 3     // landscape; flip to 1 if the screen is upside-down
+
+// --- Touch orientation (landscape) ---
+// The GT911 reports raw coords in the panel's native frame; landscape needs an
+// axis swap. If taps land on the wrong axis/side after flashing, flip these:
+//   TOUCH_SWAP_XY  — raw X drives screen Y and vice-versa
+//   TOUCH_INVERT_X / _Y — mirror that screen axis
+#define TOUCH_SWAP_XY   1
+#define TOUCH_INVERT_X  1
+#define TOUCH_INVERT_Y  0
 
 // --- Guition JC4880P433 pin map (verified from JC1060P470 sibling board) ---
 #define I2C_SDA_PIN  7
