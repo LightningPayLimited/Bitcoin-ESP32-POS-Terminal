@@ -2,6 +2,7 @@
 #include "config.h"
 #include "setup_portal.h"
 #include "logo.h"
+#include "splash_image.h"
 #include "pos_fonts.h"
 #include <qrcode.h>
 
@@ -255,21 +256,10 @@ void DisplayUI::drawButton(int x, int y, int w, int h,
 // ============================================================
 void DisplayUI::showSplash(const String& merchantName) {
     _screen = Screen::SPLASH;
-    _gfx->fillScreen(COL_BG);
-    _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ACCENT);
-    _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ACCENT);
-
-    // Lightning Pay wordmark (white text + gold bolt) centred on black.
-    int logoX = (SCREEN_WIDTH - LOGO_W) / 2;
-    int logoY = 150;
-    _gfx->draw16bitRGBBitmap(logoX, logoY, LOGO_RGB565, LOGO_W, LOGO_H);
-
-    drawCenteredText("Bitcoin Point of Sale", SCREEN_WIDTH / 2, 260, 2, COL_FG, COL_BG);
-
-    if (merchantName.length() > 0) {
-        drawCenteredText(merchantName, SCREEN_WIDTH / 2, 305, 2, COL_DIM, COL_BG);
-    }
-    drawCenteredText("Lightning Network", SCREEN_WIDTH / 2, 360, 2, COL_ACCENT, COL_BG);
+    // Full-screen 800x480 branded splash bitmap. (The design is fixed, so the
+    // optional merchant name isn't overlaid — it would clobber the artwork.)
+    (void)merchantName;
+    _gfx->draw16bitRGBBitmap(0, 0, SPLASH_RGB565, SPLASH_W, SPLASH_H);
 }
 
 void DisplayUI::showSetupInfo() {
@@ -481,12 +471,9 @@ void DisplayUI::showWifiError(const String& ssid) {
 }
 
 void DisplayUI::showScreensaver() {
-    // No full-screen bitmap in landscape — draw a simple branded idle screen.
+    // Idle screen — the branded splash (its "Tap screen to begin" suits this).
     _screen = Screen::SCREENSAVER;
-    _gfx->fillScreen(COL_BG);
-    _gfx->draw16bitRGBBitmap((SCREEN_WIDTH - LOGO_W) / 2, 170,
-                             LOGO_RGB565, LOGO_W, LOGO_H);
-    drawCenteredText("Tap to begin", SCREEN_WIDTH / 2, 300, 2, COL_DIM, COL_BG);
+    _gfx->draw16bitRGBBitmap(0, 0, SPLASH_RGB565, SPLASH_W, SPLASH_H);
 }
 
 void DisplayUI::showError(const String& message) {
