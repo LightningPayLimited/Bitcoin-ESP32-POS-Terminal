@@ -113,7 +113,8 @@ The menu button on the numpad opens a takings screen: timeframe tabs
 (24h / week / month / last month, computed in NZ local time), a scrollable
 list of transactions with count and paid total, and a per-row **Check**
 button that re-queries the invoice's live status. (Stacked only — BTCPay
-shows a "not supported" notice.)
+shows a "not supported" notice.) The top-right **Update** button opens the
+firmware update menu (see Firmware Updates below).
 
 ## Hardware Setup
 
@@ -156,6 +157,74 @@ Uses the [pioarduino](https://github.com/pioarduino/platform-espressif32) fork
 for ESP32-P4 Arduino support. Upload runs at 115200 — faster rates wedge this
 board's native USB-Serial/JTAG.
 
+## Firmware Updates
+
+Every `pio run` stamps the build with the git commit (`FW_GIT_REV`) and drops
+release copies into `firmware/` (gitignored):
+
+```
+firmware/
+├── lightningpay-pos_v1.0.0_2026-07-08_ceb7bdf.bin           # OTA app image
+├── lightningpay-pos_v1.0.0_2026-07-08_ceb7bdf_factory.bin   # full image @0x0
+└── manifest.json           # all builds: version/date/commit/size/md5/sha256
+```
+
+Publish `firmware/` plus `webflash/index.html` to a static HTTPS host — the
+three update paths all feed off it:
+
+1. **Public web flasher** (`webflash/index.html`): lists every build from the
+   manifest; flashes a USB-connected POS via Web Serial (esptool-js). "Update"
+   keeps settings; "Full install" writes the factory image to a blank/bricked
+   board (erases everything). Chrome/Edge over HTTPS only.
+2. **On-device menu**: the **Update** button on the Transactions screen fetches
+   `FW_MANIFEST_URL` (set it in `config.h`), lists the builds on the touch
+   screen, and OTA-installs the tapped one over HTTPS (md5-verified).
+3. **Local portal**: `http://<pos-ip>/update` (also `http://192.168.4.1/update`
+   in setup mode) — pick a folder of builds in the browser and upload one
+   directly to the device. Handy on the bench with no public hosting.
+
+### Publishing the update site
+
+Upload the flasher page and the firmware folder side by side, so the page
+finds the manifest at `./firmware/manifest.json`:
+
+```
+https://your-host/
+├── index.html              <- copy of webflash/index.html
+└── firmware/               <- copy of the repo's firmware/ folder
+    ├── manifest.json
+    ├── lightningpay-pos_v1.0.0_2026-07-08_ceb7bdf.bin
+    └── lightningpay-pos_v1.0.0_2026-07-08_ceb7bdf_factory.bin
+```
+
+Then point the devices at it: set `FW_MANIFEST_URL` in `config.h` to
+`https://your-host/firmware/manifest.json` (it ships as an `example.com`
+placeholder) and reflash once — after that, devices update themselves from
+the site via the on-device menu.
+
+To cut a release: bump `FW_VERSION` in `config.h`, commit, `pio run`, and
+re-upload the `firmware/` folder.
+
+### Notes & caveats
+
+- **Web Serial needs HTTPS** (or `localhost`) and a Chromium browser
+  (Chrome / Edge / Opera) — Firefox and Safari have no Web Serial.
+- If the web flasher can't connect, **hold the POS's BOOT button while
+  plugging in the USB cable**, then try again (the page shows this hint too).
+- The web flasher runs the serial link at **115200 only** — this board's
+  native USB-Serial/JTAG wedges on baud changes (same reason as
+  `upload_speed` in `platformio.ini`).
+- App-only USB flashes also **erase the otadata region** (`0xe000`, 8 KB) so
+  the freshly written slot boots even on a device whose last OTA ran from
+  the other slot — don't flash the app image with plain esptool without
+  doing the same.
+- The on-device updater fetches over TLS with `setInsecure()` (no CA
+  pinning, same trade-off as `boltcard.cpp`); the manifest md5 check catches
+  corruption but not a determined MITM. Pin your hosting CA in
+  `fw_portal.cpp` (`fetchManifest` / `installFromUrl`) if that matters.
+- The `/update` portals on the device are **unauthenticated** — same
+  LAN-trust model as the setup portal.
+
 ## Project Structure
 
 Flat layout — sources live at the repo root (`src_dir = .`).
@@ -166,6 +235,9 @@ ESP32-POS/
 ├── config.h               # Pins, timings, colours, feature flags
 ├── config_store.{h,cpp}   # NVS persistent config (WiFi + provider)
 ├── setup_portal.{h,cpp}   # Captive portal + serial provisioning
+├── fw_portal.{h,cpp}      # Firmware updates: /update portal + on-device menu
+├── fw_version.py          # Build stamping + firmware/ release folder + manifest
+├── webflash/index.html    # Public Web Serial flasher page (host with firmware/)
 ├── payment_provider.h     # Common backend interface
 ├── stacked_api.{h,cpp}    # Stacked merchant API client
 ├── btcpay_api.{h,cpp}     # BTCPay Server Greenfield client

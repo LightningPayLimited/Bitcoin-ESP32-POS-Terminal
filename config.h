@@ -12,6 +12,17 @@
 //   C) Serial console commands
 #define STACKED_API_BASE "https://app.stackedbitcoin.com"
 
+// --- Firmware ---
+// Shown on the /update firmware portal next to the build timestamp.
+// Bump when cutting a release so devices report what they're running.
+#define FW_VERSION "1.0.0"
+
+// Public site hosting the firmware/ folder that fw_version.py maintains
+// (versioned .bins + manifest.json). The on-device update menu (Update
+// button on the Transactions screen) fetches this manifest and installs
+// the chosen build over HTTPS. TODO: point at your real hosting.
+#define FW_MANIFEST_URL "https://example.com/firmware/manifest.json"
+
 // --- NVS keys ---
 #define NVS_NAMESPACE     "stacked"
 #define NVS_KEY_APIKEY    "api_key"

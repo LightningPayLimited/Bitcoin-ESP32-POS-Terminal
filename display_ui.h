@@ -40,7 +40,7 @@ public:
     void showTransactionHistory(const HistoryData& d, const String& currency);
 
     // Result of a touch on the history screen.
-    enum class HistEvent { NONE, BACK, CHECK };
+    enum class HistEvent { NONE, BACK, CHECK, UPDATE };
     /// Handle a touch (tabs / scroll / back / a row's Check button). Re-renders
     /// internally on tab/scroll. On CHECK, outRecordIdx is the d.all index of
     /// the tapped transaction and the button shows a "..." spinner.
@@ -68,6 +68,11 @@ public:
 
     Key  pollTouch();
     bool anyTouch();
+
+    /// Debounced raw touch read for ad-hoc screens drawn outside DisplayUI
+    /// (e.g. the firmware-update menu). Returns true once per press with
+    /// the touch coordinates.
+    bool touchPoint(uint16_t& x, uint16_t& y);
 
     Screen    screen() const { return _screen; }
     Arduino_GFX* gfx() { return _gfx; }

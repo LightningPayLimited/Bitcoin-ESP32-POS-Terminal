@@ -27,6 +27,7 @@
 #include "config.h"
 #include "config_store.h"
 #include "setup_portal.h"
+#include "fw_portal.h"
 #include "display_ui.h"
 #include "tx_history.h"
 #include "stacked_api.h"
@@ -59,6 +60,7 @@ enum class State {
 static State        state = State::BOOT;
 static ConfigStore  config;
 static SetupPortal  portal;
+static FirmwarePortal fwPortal;
 DisplayUI           ui;  // non-static — referenced from setup_portal.cpp
 
 // Payment backend — one of these is selected at boot based on saved config.
@@ -518,6 +520,9 @@ void setup() {
 
     Serial.printf("[BOOT] WiFi OK: %s\n", WiFi.localIP().toString().c_str());
 
+    // Firmware update portal — http://<device-ip>/update on the LAN.
+    fwPortal.begin();
+
     // Sync the wall-clock so the transaction-history screen can compute
     // calendar boundaries (this week / month) in NZ local time. SNTP runs in
     // the background; wait briefly for the first sync but don't block forever.
@@ -707,6 +712,8 @@ static void resolveBTCPayStore() {
 void loop() {
     // Always check for serial commands (RESET, config JSON)
     portal.checkSerial(config);
+    // Firmware update portal (/update) — non-blocking when idle
+    fwPortal.handle();
     if (checkFactoryResetButton()) {
         // Released early — restore the appropriate screen.
         if (state == State::IDLE)             ui.showAmountEntry(enteredAmount, currencyLabel);
@@ -912,6 +919,10 @@ void loop() {
             ui.pollTransactionHistory(histData, currencyLabel, recIdx);
         if (ev == DisplayUI::HistEvent::BACK) {
             resetToIdle();
+        } else if (ev == DisplayUI::HistEvent::UPDATE) {
+            // Blocks in the update menu; reboots on a successful install.
+            fwPortal.runUpdateMenu();
+            ui.showTransactionHistory(histData, currencyLabel);
         } else if (ev == DisplayUI::HistEvent::CHECK &&
                    recIdx >= 0 && recIdx < (int)histData.all.size()) {
             // Re-check live status of the tapped transaction (button already

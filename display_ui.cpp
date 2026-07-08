@@ -53,6 +53,10 @@
 #define BACK_X     6
 #define BACK_Y     ((HDR_H - BACK_H) / 2)
 
+// Firmware-update button — mirrors Back on the right edge of the header.
+#define UPD_W      100
+#define UPD_X      (SCREEN_WIDTH - UPD_W - 6)
+
 // Timeframe tabs (4 across, just under the header)
 #define TAB_Y      54
 #define TAB_H      44
@@ -584,6 +588,11 @@ void DisplayUI::showTransactionHistory(const HistoryData& d,
     drawCenteredText("< Back", BACK_X + BACK_W / 2, BACK_Y + BACK_H / 2, 2,
                      COL_ACCENT, COL_BG);
 
+    // Firmware-update button (top-right) — opens the on-device update menu.
+    _gfx->fillRoundRect(UPD_X, BACK_Y, UPD_W, BACK_H, 7, COL_BG);
+    drawCenteredText("Update", UPD_X + UPD_W / 2, BACK_Y + BACK_H / 2, 2,
+                     COL_ACCENT, COL_BG);
+
     if (!d.ok) {
         String msg = d.error == "Clock not set" ? "Clock not synced yet" : d.error;
         drawCenteredText("Couldn't load", SCREEN_WIDTH / 2, 360, 4, COL_ERROR, COL_BG);
@@ -716,6 +725,10 @@ DisplayUI::HistEvent DisplayUI::pollTransactionHistory(const HistoryData& d,
     if (tx < BACK_X + BACK_W + 14 && ty < BACK_Y + BACK_H + 8)
         return HistEvent::BACK;
 
+    // Firmware-update button (top-right corner).
+    if (tx >= UPD_X - 14 && ty < BACK_Y + BACK_H + 8)
+        return HistEvent::UPDATE;
+
     // Timeframe tabs — a little slop below (the summary line is non-interactive).
     if (ty >= TAB_Y && ty < TAB_Y + TAB_H + 16) {
         for (int i = 0; i < TAB_COUNT; i++) {
@@ -812,6 +825,17 @@ bool DisplayUI::anyTouch() {
         _gfx->fillCircle(tx, ty, 8, COL_ERROR);
     }
     if (touched && !_wasTouched && (millis() - _lastTouch > 300)) {
+        _wasTouched = true;
+        _lastTouch = millis();
+        return true;
+    }
+    if (!touched) _wasTouched = false;
+    return false;
+}
+
+bool DisplayUI::touchPoint(uint16_t& x, uint16_t& y) {
+    bool touched = gt911ReadTouch(&x, &y);
+    if (touched && !_wasTouched && (millis() - _lastTouch > 250)) {
         _wasTouched = true;
         _lastTouch = millis();
         return true;

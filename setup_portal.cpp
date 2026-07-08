@@ -1,5 +1,6 @@
 #include "setup_portal.h"
 #include "config.h"
+#include "fw_portal.h"
 #include "display_ui.h"
 #include "printer.h"
 #include "nfc.h"
@@ -363,6 +364,10 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
         server.send(200, "application/json", "{\"ok\":true}");
         saved = true;
     });
+
+    // Firmware update portal — also reachable during setup at
+    // http://192.168.4.1/update (explicit routes win over onNotFound).
+    FirmwarePortal::attach(server);
 
     server.begin();
 

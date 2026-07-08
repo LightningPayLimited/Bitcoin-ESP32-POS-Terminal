@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<!--
+  Lightning Pay POS — public web flasher.
+
+  Deploy this page and the repo's firmware/ folder (versioned .bins +
+  manifest.json, maintained by fw_version.py) side by side on any static
+  HTTPS host:
+
+      /index.html            <- this file
+      /firmware/manifest.json
+      /firmware/lightningpay-pos_v1.0.0_2026-07-08_ceb7bdf.bin
+      /firmware/lightningpay-pos_v1.0.0_2026-07-08_ceb7bdf_factory.bin
+
+  The page lists every build from the manifest and flashes the chosen one
+  to a POS plugged in over USB, using Web Serial + esptool-js. HTTPS (or
+  localhost) is required for Web Serial; Chrome/Edge/Opera only.
+
+  Update      = app image at 0x10000 + otadata erase (keeps settings).
+  Full install = factory image at 0x0 with full chip erase (blank/bricked
+                 boards; wipes WiFi + API settings).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lightning Pay POS — Firmware Flasher</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: #111; color: #fff;
+         display: flex; justify-content: center; padding: 20px; }
+  .card { background: #1a1a1a; border-radius: 16px; padding: 32px;
+          max-width: 520px; width: 100%; }
+  h1 { color: #f7931a; font-size: 24px; margin-bottom: 4px; }
+  .sub { color: #888; font-size: 14px; margin-bottom: 20px; }
+  h2 { color: #ccc; font-size: 14px; font-weight: 600; margin: 20px 0 8px; }
+  .hint { color: #666; font-size: 12px; margin-top: 6px; }
+  .warn { color: #fa5; }
+  .hidden { display: none; }
+  .file { display: block; background: #222; border: 1px solid #333; border-radius: 8px;
+          padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+  .file:hover { border-color: #555; }
+  .file.sel { border-color: #f7931a; }
+  .file input, .mode input { margin-right: 8px; accent-color: #f7931a; }
+  .fname { font-size: 14px; word-break: break-all; }
+  .latest { color: #0c0; font-style: normal; font-size: 11px; font-weight: 700;
+            border: 1px solid #0c0; border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
+  .fmeta { display: block; color: #777; font-size: 12px; margin: 4px 0 0 24px; }
+  .mode { display: block; color: #ccc; font-size: 14px; padding: 6px 0; cursor: pointer; }
+  .flash { width: 100%; padding: 14px; border-radius: 8px; border: none;
+           background: #f7931a; color: #000; font-size: 18px; font-weight: 700;
+           cursor: pointer; margin-top: 16px; }
+  .flash:hover:enabled { background: #d97e00; }
+  .flash:disabled { background: #444; color: #888; cursor: default; }
+  .barwrap { margin-top: 16px; height: 22px; background: #222; border: 1px solid #333;
+             border-radius: 8px; overflow: hidden; }
+  #bar { height: 100%; width: 0; background: #f7931a; transition: width .2s; }
+  #status { margin-top: 12px; font-size: 14px; color: #aaa; min-height: 20px; }
+  #status.err { color: #f55; }
+  #status.ok { color: #0c0; }
+  #log { margin-top: 12px; background: #0a0a0a; border: 1px solid #333; border-radius: 8px;
+         padding: 10px; font: 11px/1.5 monospace; color: #7a7; max-height: 180px;
+         overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>&#9889; POS Firmware Flasher</h1>
+  <p class="sub">Plug the Lightning Pay POS terminal into this computer with a USB cable,
+     pick a firmware build, and flash.</p>
+
+  <p id="unsupported" class="hint warn hidden">
+    This browser has no Web Serial support &mdash; use Chrome, Edge or Opera
+    on desktop, over HTTPS.</p>
+
+  <h2>Available firmware</h2>
+  <div id="list"><p class="hint">Loading manifest&hellip;</p></div>
+
+  <h2>Install mode</h2>
+  <label class="mode"><input type="radio" name="mode" value="app" checked>
+    Update &mdash; app only, keeps WiFi &amp; settings</label>
+  <label class="mode"><input type="radio" name="mode" value="factory" id="modeFactory">
+    Full install &mdash; erases everything (new or bricked device)</label>
+
+  <button class="flash" id="flashBtn" disabled>Connect &amp; Flash</button>
+  <div class="barwrap hidden" id="barwrap"><div id="bar"></div></div>
+  <p id="status"></p>
+  <p class="hint">If connecting fails, hold the POS's BOOT button while plugging
+     in the USB cable, then try again.</p>
+  <div id="log" class="hidden"></div>
+</div>
+
+<script type="module">
+import { ESPLoader, Transport } from "https://unpkg.com/esptool-js@0.5.4/bundle.js";
+
+const FIRMWARE_DIR = "./firmware/";   // manifest.json + .bins live here
+
+const listEl   = document.getElementById("list");
+const flashBtn = document.getElementById("flashBtn");
+const barwrap  = document.getElementById("barwrap");
+const bar      = document.getElementById("bar");
+const st       = document.getElementById("status");
+const logEl    = document.getElementById("log");
+const modeFactory = document.getElementById("modeFactory");
+
+let builds = [];
+
+const esc = s => s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtSize = n => n >= 1048576 ? (n/1048576).toFixed(2) + " MB" : Math.round(n/1024) + " KB";
+
+function log(line) {
+  logEl.classList.remove("hidden");
+  logEl.textContent += line + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+if (!("serial" in navigator)) {
+  document.getElementById("unsupported").classList.remove("hidden");
+  flashBtn.disabled = true;
+}
+
+fetch(FIRMWARE_DIR + "manifest.json", {cache: "no-store"})
+  .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+  .then(m => { builds = m.builds || []; render(); })
+  .catch(e => { listEl.innerHTML = '<p class="hint warn">Could not load manifest.json (' + esc(String(e.message||e)) + ')</p>'; });
+
+function render() {
+  if (!builds.length) {
+    listEl.innerHTML = '<p class="hint">No builds in the manifest yet.</p>';
+    return;
+  }
+  listEl.innerHTML = builds.map((b, i) =>
+    '<label class="file' + (i === 0 ? " sel" : "") + '">' +
+    '<input type="radio" name="fw" value="' + i + '"' + (i === 0 ? " checked" : "") + '>' +
+    '<span class="fname">v' + esc(b.version) + ' @' + esc(b.commit) +
+      (i === 0 ? '<em class="latest">LATEST</em>' : '') + '</span>' +
+    '<span class="fmeta">' + esc(b.date) +
+      (b.app ? ' &middot; ' + fmtSize(b.app.size) : '') +
+      (b.factory ? '' : ' &middot; no factory image') + '</span>' +
+    '</label>').join("");
+  listEl.querySelectorAll("input[name=fw]").forEach(r => r.addEventListener("change", () => {
+    listEl.querySelectorAll(".file").forEach(el => el.classList.remove("sel"));
+    r.closest(".file").classList.add("sel");
+    syncModes();
+  }));
+  if ("serial" in navigator) flashBtn.disabled = false;
+  syncModes();
+}
+
+function selectedBuild() {
+  const sel = document.querySelector("input[name=fw]:checked");
+  return sel ? builds[+sel.value] : null;
+}
+
+function syncModes() {
+  const b = selectedBuild();
+  modeFactory.disabled = !(b && b.factory);
+  if (modeFactory.disabled && modeFactory.checked)
+    document.querySelector('input[name=mode][value=app]').checked = true;
+}
+
+function setBar(frac) { bar.style.width = Math.round(frac * 100) + "%"; }
+function fail(msg) { st.className = "err"; st.textContent = "❌ " + msg; flashBtn.disabled = false; }
+
+const espTerm = { clean() {}, writeLine(l) { log(l); }, write(d) {} };
+
+flashBtn.addEventListener("click", async () => {
+  const b = selectedBuild();
+  if (!b) return;
+  const mode = document.querySelector("input[name=mode]:checked").value;
+  const entry = mode === "factory" ? b.factory : b.app;
+  if (!entry) return fail("This build has no " + mode + " image");
+
+  if (mode === "factory" &&
+      !confirm("Full install ERASES all settings (WiFi, API key) on the POS. Continue?"))
+    return;
+
+  flashBtn.disabled = true;
+  barwrap.classList.remove("hidden");
+  setBar(0);
+  st.className = "";
+
+  let transport = null;
+  try {
+    st.textContent = "Downloading " + entry.file + "…";
+    const resp = await fetch(FIRMWARE_DIR + entry.file, {cache: "no-store"});
+    if (!resp.ok) throw new Error("Firmware download failed: HTTP " + resp.status);
+    const buf = new Uint8Array(await resp.arrayBuffer());
+    // esptool-js wants latin1 binary strings
+    const binstr = new TextDecoder("latin1").decode(buf);
+
+    st.textContent = "Select the POS serial port…";
+    const device = await navigator.serial.requestPort();
+    transport = new Transport(device, true);
+    // 115200 throughout — this board's USB-Serial/JTAG wedges on baud
+    // changes (see platformio.ini).
+    const loader = new ESPLoader({ transport, baudrate: 115200, romBaudrate: 115200,
+                                   terminal: espTerm });
+
+    st.textContent = "Connecting to bootloader…";
+    const chip = await loader.main();
+    log("Connected: " + chip);
+    if (!/P4/i.test(chip) &&
+        !confirm("Connected chip is " + chip + ", expected ESP32-P4. Flash anyway?"))
+      throw new Error("Cancelled — wrong chip");
+
+    const fileArray = [];
+    if (mode === "factory") {
+      fileArray.push({ data: binstr, address: 0x0 });
+    } else {
+      fileArray.push({ data: binstr, address: 0x10000 });
+      // Erase otadata so the bootloader boots the freshly written app0
+      // slot, even on devices whose last OTA ran from app1.
+      fileArray.push({ data: "\xff".repeat(0x2000), address: 0xe000 });
+    }
+
+    st.textContent = "Flashing… do not unplug.";
+    await loader.writeFlash({
+      fileArray,
+      flashSize: "keep", flashMode: "keep", flashFreq: "keep",
+      eraseAll: mode === "factory",
+      compress: true,
+      reportProgress: (fileIndex, written, total) => {
+        if (fileIndex === 0) setBar(written / total);
+      },
+    });
+
+    try { await loader.hardReset(); } catch (e) { /* some boards need manual reset */ }
+    setBar(1);
+    st.className = "ok";
+    st.textContent = "✅ Flashed v" + b.version + " @" + b.commit +
+                     " — the POS is rebooting.";
+  } catch (e) {
+    fail(String(e.message || e));
+  } finally {
+    if (transport) { try { await transport.disconnect(); } catch (e) {} }
+    flashBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
