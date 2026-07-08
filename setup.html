@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stacked POS Setup</title>
+<title>LightningPay POS Setup</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -13,7 +13,7 @@
     min-height: 100vh;
   }
   .container { max-width: 480px; width: 100%; }
-  .logo { color: #14afac; font-size: 28px; font-weight: 800; margin-bottom: 4px; }
+  .logo { color: #f7931a; font-size: 28px; font-weight: 800; margin-bottom: 4px; }
   .subtitle { color: #666; font-size: 14px; margin-bottom: 32px; }
 
   .card {
@@ -24,30 +24,46 @@
 
   .step { display: flex; gap: 12px; margin-bottom: 16px; align-items: flex-start; }
   .step-num {
-    background: #14afac; color: #000; width: 24px; height: 24px;
+    background: #f7931a; color: #000; width: 24px; height: 24px;
     border-radius: 50%; display: flex; align-items: center; justify-content: center;
     font-weight: 700; font-size: 13px; flex-shrink: 0; margin-top: 2px;
   }
   .step-text { font-size: 14px; color: #aaa; line-height: 1.5; }
 
   label { display: block; font-size: 13px; color: #888; margin-bottom: 6px; margin-top: 16px; }
-  input {
+  input, select {
     width: 100%; padding: 10px 12px; border-radius: 8px;
     border: 1px solid #333; background: #1a1a1a; color: #fff;
     font-size: 15px;
   }
-  input:focus { border-color: #14afac; outline: none; }
+  input:focus, select:focus { border-color: #f7931a; outline: none; }
   .hint { font-size: 12px; color: #555; margin-top: 4px; }
+  a { color: #f7931a; }
+
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row select { flex: 1; }
+  .iconbtn {
+    width: auto; padding: 10px 14px; background: #222; color: #f7931a;
+    border-radius: 8px; border: 1px solid #333; font-size: 15px; cursor: pointer;
+    margin: 0;
+  }
+  .iconbtn:hover { background: #2a2a2a; }
+  .iconbtn:disabled { color: #555; cursor: not-allowed; }
+  .linkbtn {
+    background: none; color: #f7931a; border: none; padding: 6px 0;
+    font-size: 13px; cursor: pointer; text-align: left; width: auto; margin-top: 4px;
+  }
+  .hidden { display: none; }
 
   button {
     width: 100%; padding: 14px; border-radius: 8px; border: none;
     font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 20px;
     transition: background 0.2s;
   }
-  .btn-connect { background: #222; color: #14afac; border: 1px solid #333; }
+  .btn-connect { background: #222; color: #f7931a; border: 1px solid #333; }
   .btn-connect:hover { background: #2a2a2a; }
-  .btn-send { background: #14afac; color: #000; }
-  .btn-send:hover { background: #0f8f8c; }
+  .btn-send { background: #f7931a; color: #000; }
+  .btn-send:hover { background: #d97e00; }
   .btn-send:disabled { background: #333; color: #666; cursor: not-allowed; }
 
   .status {
@@ -72,7 +88,7 @@
 </head>
 <body>
 <div class="container">
-  <div class="logo">⚡ Stacked POS Setup</div>
+  <div class="logo">&#x26A1; LightningPay POS Setup</div>
   <p class="subtitle">Configure your Bitcoin point of sale terminal</p>
 
   <!-- Check Web Serial support -->
@@ -103,15 +119,48 @@
     <div class="card">
       <h2>2. Enter your details</h2>
 
-      <label>WiFi Network Name</label>
-      <input type="text" id="ssid" placeholder="Your WiFi SSID" />
+      <label>Payment Provider</label>
+      <select id="provider" onchange="providerChanged()">
+        <option value="stacked" selected>Stacked</option>
+        <option value="btcpay">BTCPayServer</option>
+      </select>
+
+      <label>WiFi Network</label>
+      <div class="row">
+        <select id="ssid"><option value="">Connect terminal to scan&hellip;</option></select>
+        <button type="button" class="iconbtn" id="btn-rescan" onclick="scanNetworks()" disabled title="Rescan">&#x21BB;</button>
+      </div>
+      <button type="button" class="linkbtn" id="toggle-manual" onclick="toggleManual()">Enter SSID manually &rarr;</button>
+      <input type="text" id="ssid-manual" class="hidden" placeholder="Hidden or custom SSID" />
 
       <label>WiFi Password</label>
       <input type="password" id="pass" placeholder="WiFi password (leave blank if open)" />
 
-      <label>Stacked Merchant API Key</label>
-      <input type="text" id="apiKey" placeholder="Your merchant API key" />
-      <p class="hint">Find this in your <a href="https://app.stackedbitcoin.com" target="_blank" style="color:#14afac">Stacked merchant dashboard</a></p>
+      <div id="stacked-fields">
+        <label>Stacked Merchant API Key</label>
+        <input type="text" id="apiKey" placeholder="Your merchant API key" />
+        <p class="hint">Find this in your <a href="https://app.stackedbitcoin.com" target="_blank">Stacked merchant dashboard</a></p>
+      </div>
+
+      <div id="btcpay-fields" class="hidden">
+        <label>BTCPay Server URL</label>
+        <input type="text" id="btcpayUrl" placeholder="https://btcpay.example.com" />
+        <label>API Key</label>
+        <input type="text" id="btcpayKey" placeholder="Greenfield API key" />
+        <p class="hint">Needs create-invoice &amp; view-invoice permissions</p>
+        <label>Currency</label>
+        <select id="currency">
+          <option value="NZD" selected>NZD</option>
+          <option value="AUD">AUD</option>
+          <option value="USD">USD</option>
+          <option value="EUR">EUR</option>
+          <option value="GBP">GBP</option>
+          <option value="CAD">CAD</option>
+          <option value="JPY">JPY</option>
+          <option value="SATS">SATS</option>
+        </select>
+        <p class="hint">You'll pick the store on this device after it restarts</p>
+      </div>
 
       <button class="btn-send" id="btn-send" onclick="sendConfig()" disabled>
         Send Configuration
@@ -131,6 +180,10 @@
 let port = null;
 let reader = null;
 let writer = null;
+let manualSsid = false;
+// Serial data arrives in arbitrary chunks — buffer until newline so we can
+// parse whole lines (SCAN_RESULT / Config saved markers).
+let lineBuffer = '';
 
 // Check browser support
 if (!('serial' in navigator)) {
@@ -151,6 +204,61 @@ function log(msg) {
   el.scrollTop = el.scrollHeight;
 }
 
+function providerChanged() {
+  const isBtcpay = document.getElementById('provider').value === 'btcpay';
+  document.getElementById('stacked-fields').classList.toggle('hidden', isBtcpay);
+  document.getElementById('btcpay-fields').classList.toggle('hidden', !isBtcpay);
+}
+
+function toggleManual() {
+  manualSsid = !manualSsid;
+  document.getElementById('ssid-manual').classList.toggle('hidden', !manualSsid);
+  document.getElementById('ssid').parentElement.style.display = manualSsid ? 'none' : 'flex';
+  document.getElementById('toggle-manual').innerHTML = manualSsid
+    ? '&larr; Choose from scanned networks'
+    : 'Enter SSID manually &rarr;';
+}
+
+function populateNetworks(list) {
+  const sel = document.getElementById('ssid');
+  const previous = sel.value;
+  if (!list.length) {
+    sel.innerHTML = '<option value="">No networks found — rescan</option>';
+    return;
+  }
+  list.sort((a, b) => b.rssi - a.rssi);
+  sel.innerHTML = list.map(n => {
+    const esc = n.ssid.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    return '<option value="' + esc + '">' + esc + (n.auth ? ' \u{1F512}' : '') + '</option>';
+  }).join('');
+  // Keep the user's selection across rescans if still present
+  if (previous && list.some(n => n.ssid === previous)) sel.value = previous;
+}
+
+async function scanNetworks() {
+  if (!writer) return;
+  const sel = document.getElementById('ssid');
+  sel.innerHTML = '<option value="">Scanning…</option>';
+  document.getElementById('btn-rescan').disabled = true;
+  try {
+    await writer.write(new TextEncoder().encode('SCAN\n'));
+    log('\n[Scan requested]\n');
+  } catch (err) {
+    sel.innerHTML = '<option value="">Scan failed — rescan</option>';
+    onPortLost('write failed: ' + err.message);
+    return;
+  }
+  // Fallback re-enable — normally SCAN_RESULT re-enables it sooner, but a
+  // scan already in flight on the device can take up to ~10s to finish.
+  setTimeout(() => {
+    document.getElementById('btn-rescan').disabled = false;
+    // Still showing "Scanning…" → the reply never arrived
+    if (sel.options.length === 1 && sel.options[0].text.startsWith('Scanning')) {
+      sel.innerHTML = '<option value="">No response — reconnect &amp; rescan</option>';
+    }
+  }, 12000);
+}
+
 async function connectSerial() {
   try {
     port = await navigator.serial.requestPort();
@@ -161,6 +269,7 @@ async function connectSerial() {
     document.getElementById('btn-connect').textContent = 'Connected ✓';
     document.getElementById('btn-connect').disabled = true;
     document.getElementById('btn-send').disabled = false;
+    document.getElementById('btn-rescan').disabled = false;
 
     // Start reading serial output
     const textDecoder = new TextDecoderStream();
@@ -168,8 +277,29 @@ async function connectSerial() {
     reader = textDecoder.readable.getReader();
 
     readLoop();
+
+    // Populate the WiFi dropdown right away
+    scanNetworks();
   } catch (err) {
     setStatus('connect-status', 'err', 'Connection failed: ' + err.message);
+  }
+}
+
+function handleLine(line) {
+  // Match SCAN_RESULT anywhere in the line — stray output printed without a
+  // trailing newline (boot spew, log fragments) must not hide the marker.
+  const m = line.indexOf('SCAN_RESULT:');
+  if (m >= 0) {
+    document.getElementById('btn-rescan').disabled = false;
+    try {
+      populateNetworks(JSON.parse(line.substring(m + 'SCAN_RESULT:'.length)));
+    } catch (err) {
+      log('\n[Scan parse error: ' + err.message + ']\n');
+      document.getElementById('ssid').innerHTML = '<option value="">Scan failed — rescan</option>';
+    }
+  } else if (line.includes('Config saved')) {
+    setStatus('send-status', 'ok',
+      'Configuration saved! The POS terminal will now restart and connect to your WiFi.');
   }
 }
 
@@ -178,28 +308,66 @@ async function readLoop() {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      if (value) log(value);
+      if (!value) continue;
+      log(value);
 
-      // Detect successful save
-      if (value && value.includes('Config saved')) {
-        setStatus('send-status', 'ok',
-          'Configuration saved! The POS terminal will now restart and connect to your WiFi.');
+      lineBuffer += value;
+      let idx;
+      while ((idx = lineBuffer.indexOf('\n')) >= 0) {
+        handleLine(lineBuffer.substring(0, idx).trim());
+        lineBuffer = lineBuffer.substring(idx + 1);
       }
     }
+    onPortLost('stream ended');
   } catch (err) {
-    log('\n[Disconnected]\n');
+    onPortLost(err.message);
   }
 }
 
+// The read loop died (USB re-enumeration, suspend/resume, cable pull…).
+// Without this the page keeps its "Connected ✓" UI while silently deaf —
+// writes may even still be accepted, but replies go nowhere.
+async function onPortLost(why) {
+  if (!port) return;
+  log('\n[Disconnected: ' + why + ']\n');
+  setStatus('connect-status', 'err', 'Connection lost — click Reconnect and try again.');
+  const btn = document.getElementById('btn-connect');
+  btn.textContent = 'Reconnect to POS Terminal';
+  btn.disabled = false;
+  document.getElementById('btn-send').disabled = true;
+  document.getElementById('btn-rescan').disabled = true;
+  try { reader.cancel(); } catch (e) {}
+  try { writer.releaseLock(); } catch (e) {}
+  try { await port.close(); } catch (e) {}
+  port = null; reader = null; writer = null; lineBuffer = '';
+}
+
 async function sendConfig() {
-  const ssid = document.getElementById('ssid').value.trim();
+  const ssid = manualSsid
+    ? document.getElementById('ssid-manual').value.trim()
+    : document.getElementById('ssid').value.trim();
   const pass = document.getElementById('pass').value;
-  const apiKey = document.getElementById('apiKey').value.trim();
+  const provider = document.getElementById('provider').value;
 
-  if (!ssid) { setStatus('send-status', 'err', 'WiFi SSID is required'); return; }
-  if (!apiKey) { setStatus('send-status', 'err', 'API key is required'); return; }
+  if (!ssid) { setStatus('send-status', 'err', 'WiFi network is required'); return; }
 
-  const config = JSON.stringify({ ssid, pass, apiKey });
+  let config;
+  if (provider === 'btcpay') {
+    const btcpayUrl = document.getElementById('btcpayUrl').value.trim();
+    const apiKey = document.getElementById('btcpayKey').value.trim();
+    const currency = document.getElementById('currency').value;
+    if (!btcpayUrl) { setStatus('send-status', 'err', 'BTCPay Server URL is required'); return; }
+    if (!/^https?:\/\//i.test(btcpayUrl)) {
+      setStatus('send-status', 'err', 'BTCPay Server URL must start with https://');
+      return;
+    }
+    if (!apiKey) { setStatus('send-status', 'err', 'API key is required'); return; }
+    config = JSON.stringify({ ssid, pass, provider: 'btcpay', btcpayUrl, apiKey, currency });
+  } else {
+    const apiKey = document.getElementById('apiKey').value.trim();
+    if (!apiKey) { setStatus('send-status', 'err', 'API key is required'); return; }
+    config = JSON.stringify({ ssid, pass, apiKey });
+  }
 
   try {
     setStatus('send-status', 'info', 'Sending configuration...');

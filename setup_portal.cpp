@@ -420,8 +420,12 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
 
 // ================================================================
 // Serial config receiver
-// Accepts JSON on serial: {"ssid":"...","pass":"...","apiKey":"..."}
-// Also accepts "RESET" to factory reset
+// Accepts JSON on serial:
+//   Stacked: {"ssid":"...","pass":"...","apiKey":"..."}
+//   BTCPay : {"ssid":"...","pass":"...","provider":"btcpay",
+//             "btcpayUrl":"...","apiKey":"...","currency":"..."}
+// Also accepts "RESET" (factory reset) and "SCAN" (list WiFi
+// networks — replies with SCAN_RESULT:[{ssid,rssi,auth},...])
 // ================================================================
 
 bool SetupPortal::checkSerial(ConfigStore& store) {
@@ -438,6 +442,63 @@ bool SetupPortal::checkSerial(ConfigStore& store) {
         Serial.println("[SERIAL] Factory reset. Rebooting...");
         delay(1000);
         ESP.restart();
+        return false;
+    }
+
+    // WiFi scan command — used by the USB setup page to populate its
+    // network dropdown. The captive portal keeps an async scan running
+    // (started at portal boot and after each /scan), and scanNetworks()
+    // returns WIFI_SCAN_RUNNING instead of scanning while one is in
+    // flight — so reuse completed results / wait for the running scan,
+    // and only fall back to a fresh sync scan (~2-3s) when idle.
+    // scanNetworks enables STA itself so this works in any WiFi mode.
+    if (line.equalsIgnoreCase("SCAN")) {
+        Serial.println("[SERIAL] Scanning WiFi networks...");
+        int n = WiFi.scanComplete();
+        if (n == WIFI_SCAN_RUNNING) {
+            // Async scan in flight — wait for it (up to 10s)
+            for (int i = 0; i < 100 && n == WIFI_SCAN_RUNNING; i++) {
+                delay(100);
+                n = WiFi.scanComplete();
+            }
+        }
+        if (n < 0) {
+            // No results and nothing running — do a fresh sync scan.
+            // scanNetworks() refuses (returns RUNNING) if a scan raced in
+            // meanwhile, so wait that one out too instead of giving up.
+            n = WiFi.scanNetworks(false /* sync */, true /* show hidden */);
+            for (int i = 0; i < 100 && n == WIFI_SCAN_RUNNING; i++) {
+                delay(100);
+                n = WiFi.scanComplete();
+            }
+        }
+        // Serialize with ArduinoJson — SSIDs are arbitrary bytes and can
+        // contain control chars that hand-rolled escaping would let poison
+        // JSON.parse on the page.
+        JsonDocument scanDoc;
+        JsonArray nets = scanDoc.to<JsonArray>();
+        // Deduplicate by SSID, keep strongest signal (same as /scan)
+        for (int i = 0; i < n; i++) {
+            String ssid = WiFi.SSID(i);
+            if (ssid.length() == 0) continue;  // skip hidden
+
+            bool dup = false;
+            for (int j = 0; j < i; j++) {
+                if (WiFi.SSID(j) == ssid && WiFi.RSSI(j) >= WiFi.RSSI(i)) { dup = true; break; }
+            }
+            if (dup) continue;
+
+            JsonObject net = nets.add<JsonObject>();
+            net["ssid"] = ssid;
+            net["rssi"] = WiFi.RSSI(i);
+            net["auth"] = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+        }
+        String out;
+        serializeJson(nets, out);
+        Serial.print("SCAN_RESULT:");
+        Serial.println(out);
+        Serial.flush();
+        WiFi.scanDelete();
         return false;
     }
 
