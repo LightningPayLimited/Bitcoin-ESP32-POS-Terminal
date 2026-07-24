@@ -21,6 +21,8 @@ public:
     void showSplash(const String& merchantName = "");
     void showSetupInfo(const String& ssid, const String& ip);
     void showAmountEntry(const String& amount, const String& currency);
+    /// Repaint only the amount bar (no full-screen redraw / flash).
+    void updateAmount(const String& amount, const String& currency);
     void showMessage(const String& title, const String& body, uint16_t accent);
     void showLoading(const String& message);
     void showQR(const String& bolt11, uint64_t sats, float fiat,
@@ -33,6 +35,8 @@ public:
     Key  pollTouch();
     /// True on a fresh tap anywhere (for dismiss screens).
     bool anyTouch();
+    /// True on a fresh tap on the QR screen's close (X) button.
+    bool qrCloseTouched();
 
     Arduino_GFX* gfx() { return _gfx; }
 

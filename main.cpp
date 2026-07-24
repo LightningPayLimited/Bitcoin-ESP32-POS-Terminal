@@ -82,7 +82,7 @@ static void handleKey(Key k) {
     } else {
         return;
     }
-    ui.showAmountEntry(amount, currencyLabel);
+    ui.updateAmount(amount, currencyLabel);
 }
 
 // ---- WiFi ----
@@ -201,6 +201,8 @@ void setup() {
     delay(300);
     Serial.println("\n[S3] Lightning Pay POS — payment stage");
 
+    pinMode(BOOT_BTN, INPUT_PULLUP);   // WiFi-reset hold (see checkWifiResetButton)
+
     ui.begin();
     ui.showSplash();
     delay(1200);
@@ -261,8 +263,44 @@ void setup() {
     Serial.println("[POS] Ready");
 }
 
+// Hold the BOOT key ~5s (any time the POS is running) to drop the WiFi/setup
+// config and reboot into the captive portal. Polled at runtime because GPIO0
+// is a strapping pin — held through a reset it selects the ROM bootloader, so
+// a power-on check could never see it.
+static void checkWifiResetButton() {
+    static uint32_t heldSince = 0;
+    static int shownSecs = -1;
+
+    if (digitalRead(BOOT_BTN) == HIGH) {
+        if (shownSecs != -1) resetToIdle();   // released early — restore UI
+        heldSince = 0;
+        shownSecs = -1;
+        return;
+    }
+
+    if (heldSince == 0) { heldSince = millis(); return; }
+    uint32_t held = millis() - heldSince;
+    if (held < 700) return;                   // debounce/accidental taps
+
+    int secsLeft = 5 - (int)((held - 700) / 1000);
+    if (secsLeft > 0) {
+        if (secsLeft != shownSecs) {
+            shownSecs = secsLeft;
+            ui.showMessage("WiFi reset", "keep holding: " + String(secsLeft) + "s",
+                           COL_ACCENT);
+        }
+        return;
+    }
+
+    ui.showMessage("WiFi reset", "rebooting to setup", COL_ACCENT);
+    config.markUnprovisioned();
+    delay(1000);
+    ESP.restart();
+}
+
 void loop() {
     portal.checkSerial(config);
+    checkWifiResetButton();
 
     switch (state) {
 
@@ -372,7 +410,7 @@ void loop() {
             }
         }
 
-        if (ui.anyTouch()) resetToIdle();   // cancel
+        if (ui.qrCloseTouched()) resetToIdle();   // cancel via the X button only
         break;
     }
 

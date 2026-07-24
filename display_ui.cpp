@@ -9,6 +9,12 @@
 #define QR_Y      8
 #define CD_Y      288   // countdown text baseline region
 
+// Close button on the QR/invoice screen (bottom-right)
+#define QRC_X     168
+#define QRC_Y     252
+#define QRC_W     66
+#define QRC_H     60
+
 // ---- Numpad geometry (240x320 portrait) ----
 #define AMT_H    66          // amount bar height
 #define KP_X0    6
@@ -102,14 +108,19 @@ void DisplayUI::showSetupInfo(const String& ssid, const String& ip) {
     centerText("Enter WiFi + API key", SCREEN_WIDTH / 2, 268, 1, COL_DIM);
 }
 
-void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
-    _gfx->fillScreen(COL_BG);
-
-    // Amount bar
+// Repaint just the amount bar — called on every keypress so the keypad
+// itself doesn't get redrawn (full-screen redraws flash visibly).
+void DisplayUI::updateAmount(const String& amount, const String& currency) {
     _gfx->fillRect(0, 0, SCREEN_WIDTH, AMT_H, COL_KEYPAD_BG);
     String amt = amount.length() ? amount : "0";
     centerText("$" + amt, SCREEN_WIDTH / 2, 26, 3, COL_FG);
     centerText(currency,  SCREEN_WIDTH / 2, 52, 1, COL_DIM);
+}
+
+void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
+    _gfx->fillScreen(COL_BG);
+
+    updateAmount(amount, currency);
 
     // Numpad
     for (int r = 0; r < 4; r++) {
@@ -162,21 +173,24 @@ void DisplayUI::showQR(const String& bolt11, uint64_t sats, float fiat,
     _gfx->fillScreen(COL_BG);
     drawQRCode(bolt11, QR_X, QR_Y, QR_AREA);
 
+    // Bottom strip: amounts + countdown on the left, close button on the right.
     char line[48];
     snprintf(line, sizeof(line), "$%.2f %s", fiat, currency.c_str());
-    centerText(line, SCREEN_WIDTH / 2, 258, 2, COL_FG);
+    centerText(line, QRC_X / 2, 262, 2, COL_FG);
     snprintf(line, sizeof(line), "%lu sats", (unsigned long)sats);
-    centerText(line, SCREEN_WIDTH / 2, 280, 1, COL_DIM);
+    centerText(line, QRC_X / 2, 284, 1, COL_DIM);
+
+    drawButton(QRC_X, QRC_Y, QRC_W, QRC_H, "X", COL_KEYPAD_BG, COL_FG, 3);
 
     updateCountdown(secsLeft);
 }
 
 void DisplayUI::updateCountdown(int secsLeft) {
-    _gfx->fillRect(0, CD_Y + 12, SCREEN_WIDTH, 18, COL_BG);   // clear old text
+    _gfx->fillRect(0, CD_Y + 12, QRC_X, 18, COL_BG);   // clear old text (left of X)
     if (secsLeft < 0) secsLeft = 0;
     char line[24];
     snprintf(line, sizeof(line), "Expires in %ds", secsLeft);
-    centerText(line, SCREEN_WIDTH / 2, CD_Y + 20, 1, COL_ACCENT);
+    centerText(line, QRC_X / 2, CD_Y + 20, 1, COL_ACCENT);
 }
 
 void DisplayUI::showPaid(uint64_t sats, float fiat, const String& currency) {
@@ -240,6 +254,19 @@ Key DisplayUI::pollTouch() {
     }
     if (!touched) _touchDown = false;
     return Key::NONE;
+}
+
+bool DisplayUI::qrCloseTouched() {
+    int x, y;
+    bool touched = readTouchPoint(x, y);
+    if (touched && !_touchDown && (millis() - _lastTouchMs > 250)) {
+        _touchDown = true;
+        _lastTouchMs = millis();
+        return x >= QRC_X && x <= QRC_X + QRC_W &&
+               y >= QRC_Y && y <= QRC_Y + QRC_H;
+    }
+    if (!touched) _touchDown = false;
+    return false;
 }
 
 bool DisplayUI::anyTouch() {
