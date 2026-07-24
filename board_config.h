@@ -23,14 +23,21 @@
 #define TOUCH_INT  17   // active low
 #define TOUCH_ADDR 0x38 // FT6x36 standard 7-bit address
 
-// --- NFC (PN532 bit-bang I2C) on free header GPIOs ---
-// Dedicated pins (NOT shared with the FT6336 touch on 15/16), so no bus
-// hand-off games like the P4 needed. Using 14/21 (clean GPIOs) rather than
-// 2/3 — GPIO3 is an ESP32-S3 strapping pin (JTAG sel), bad for a bit-bang bus.
-// Sweep showed the module actually wired to GPIO9 + GPIO6 (the header pins are
-// mislabeled vs the chip GPIOs). Auto-swap sorts SDA/SCL orientation.
-#define NFC_SDA_PIN  9
-#define NFC_SCL_PIN  6
+// --- NFC (PN532 bit-bang I2C) on the rear IIC socket ---
+// Per lcdwiki, the board's 1.25mm 4P "IIC" socket on the back is wired to
+// IO16/IO15 — the SAME bus as the FT6336 touch. So the PN532 shares the touch
+// bus and nfc.cpp does a Wire hand-off around each access, like the P4.
+// (Earlier sweep "hit" on GPIO9+GPIO6 was a false positive: GPIO9 is the
+// battery ADC divider — slow rise reads as ACK — and GPIO6 is an audio pin
+// held low by the amp.)
+#define NFC_SDA_PIN  TOUCH_SDA
+#define NFC_SCL_PIN  TOUCH_SCL
+
+// --- BOOT key (also the GPIO0 strapping pin) ---
+// Readable as a normal active-low input once the app is running. Do NOT gate
+// anything on it at power-on: held through a reset it puts the chip in the
+// ROM bootloader instead of running the app.
+#define BOOT_BTN  0
 
 // --- UART0 console (via onboard USB bridge) ---
 #define UART_RX   43

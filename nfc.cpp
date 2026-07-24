@@ -1,17 +1,52 @@
 #include "nfc.h"
 #include "config.h"
+#include <Wire.h>
 #include <PN532_SWI2C.h>
 #include <PN532.h>
 
-// PN532 over a bit-banged software I2C bus on dedicated pins (NFC_SDA_PIN /
-// NFC_SCL_PIN). We bit-bang because the hardware I2C driver can't ride the
-// PN532's clock stretching. On the S3 these pins are NOT shared with anything,
-// so there's no bus hand-off to do (unlike the P4, where NFC shared the touch
-// bus).
+// PN532 over a bit-banged software I2C bus. We bit-bang because the hardware
+// I2C driver can't ride the PN532's clock stretching. The rear IIC socket sits
+// on the SAME pins as the FT6336 touch (16/15), so every NFC access has to
+// take the bus from the hardware Wire driver and hand it back afterwards —
+// same dance as the P4.
 static PN532_SWI2C* pn532i2c = nullptr;
 static PN532*       pn532     = nullptr;
 
+// Detach the hardware I2C peripheral so the bit-bang driver owns the pins.
+static void busToNfc() {
+    Wire.end();
+}
+
+// Give the bus back to the FT6336: reattach hardware Wire on the touch pins.
+static void busToTouch() {
+    Wire.begin(TOUCH_SDA, TOUCH_SCL);
+    Wire.setClock(400000);
+}
+
 NFC nfc;
+
+// I2C bus recovery: a slave caught mid-transfer (e.g. by an MCU reset during a
+// read) keeps driving SDA low forever, waiting for clocks that never come. No
+// START/address write can get through until it's released. Fix: pulse the
+// healthy line as a clock so the slave shifts out its remaining bits and lets
+// go, then issue a STOP. Returns true if the stuck line came back up.
+static bool busRecover(int stuckLine, int clockLine) {
+    pinMode(stuckLine, INPUT_PULLUP);
+    pinMode(clockLine, INPUT_PULLUP);
+    for (int i = 0; i < 16 && digitalRead(stuckLine) == 0; i++) {
+        pinMode(clockLine, OUTPUT); digitalWrite(clockLine, LOW);
+        delayMicroseconds(10);
+        pinMode(clockLine, INPUT_PULLUP);
+        delayMicroseconds(10);
+    }
+    if (digitalRead(stuckLine) == 0) return false;   // still held — not a wedge
+    // STOP condition: data low->high while clock is high.
+    pinMode(stuckLine, OUTPUT); digitalWrite(stuckLine, LOW);
+    delayMicroseconds(10);
+    pinMode(stuckLine, INPUT_PULLUP);
+    delayMicroseconds(10);
+    return true;
+}
 
 // Try to bring up the PN532 on a specific SDA/SCL assignment. Returns true and
 // leaves the driver configured + SAMConfig'd on success. begin() calls this for
@@ -19,10 +54,22 @@ NFC nfc;
 static bool tryInit(int sda, int scl) {
     // Resting line levels before we start driving the bus. Both should read
     // HIGH on a healthy idle bus; a line stuck at 0 means it's held low
-    // externally (e.g. a dead/under-powered module).
+    // externally — either a wedged slave (recoverable) or a dead/under-powered
+    // module (not).
     pinMode(sda, INPUT_PULLUP);
     pinMode(scl, INPUT_PULLUP);
     delay(5);
+    if (digitalRead(sda) == 0 && digitalRead(scl) == 1) {
+        Serial.printf("[NFC] GPIO%d stuck low — attempting bus recovery\n", sda);
+        Serial.printf("[NFC] Recovery %s\n",
+                      busRecover(sda, scl) ? "released the line" : "failed (line still held low)");
+        delay(5);
+    } else if (digitalRead(scl) == 0 && digitalRead(sda) == 1) {
+        Serial.printf("[NFC] GPIO%d stuck low — attempting bus recovery\n", scl);
+        Serial.printf("[NFC] Recovery %s\n",
+                      busRecover(scl, sda) ? "released the line" : "failed (line still held low)");
+        delay(5);
+    }
     Serial.printf("[NFC] Try SDA=GPIO%d SCL=GPIO%d (idle: SDA=%d SCL=%d; 1=healthy)\n",
                   sda, scl, digitalRead(sda), digitalRead(scl));
 
@@ -33,7 +80,13 @@ static bool tryInit(int sda, int scl) {
     pn532    = new PN532(*pn532i2c);
     pn532->begin();
 
-    uint32_t ver = pn532->getFirmwareVersion();
+    // A PN532 waking from LowVbat can eat the first command (its wake-up ACK
+    // outlasts the 10ms ACK window), so give it a few attempts.
+    uint32_t ver = 0;
+    for (int attempt = 0; attempt < 3 && ver == 0; attempt++) {
+        if (attempt) delay(50);
+        ver = pn532->getFirmwareVersion();
+    }
     bool ok = (ver != 0);
     if (ok) {
         Serial.printf("[NFC] PN532 chip=0x%02X fw=%d.%d via bit-bang I2C (SDA=%d SCL=%d)\n",
@@ -48,21 +101,102 @@ static bool tryInit(int sda, int scl) {
 }
 
 bool NFC::tryPins(int sda, int scl) {
-    if (tryInit(sda, scl)) { _ready = true; return true; }
-    return false;
+    busToNfc();
+    bool ok = tryInit(sda, scl);
+    busToTouch();
+    if (ok) _ready = true;
+    return ok;
+}
+
+// Single bit-bang address probe, clock-stretch tolerant — diagnostic.
+static bool bbProbe(int sda, int scl, uint8_t addr) {
+    const int H = 6;
+    auto rel = [](int p) { pinMode(p, INPUT_PULLUP); };
+    auto low = [](int p) { pinMode(p, OUTPUT); digitalWrite(p, LOW); };
+    auto sclHigh = [&]() {
+        pinMode(scl, INPUT_PULLUP);
+        uint32_t t0 = micros();
+        while (digitalRead(scl) == 0 && micros() - t0 < 2000) {}
+    };
+    rel(sda); rel(scl); delayMicroseconds(H * 2);
+    low(sda); delayMicroseconds(H);                    // START
+    low(scl); delayMicroseconds(H);
+    uint8_t b = (uint8_t)((addr << 1) | 0);
+    for (int i = 0; i < 8; i++) {
+        if (b & 0x80) rel(sda); else low(sda);
+        delayMicroseconds(H);
+        sclHigh(); delayMicroseconds(H);
+        low(scl);  delayMicroseconds(H);
+        b <<= 1;
+    }
+    rel(sda); delayMicroseconds(H);                    // ACK slot
+    sclHigh(); delayMicroseconds(H);
+    bool ack = (digitalRead(sda) == 0);
+    low(scl); delayMicroseconds(H);
+    low(sda); delayMicroseconds(H);                    // STOP
+    sclHigh(); delayMicroseconds(H);
+    rel(sda); delayMicroseconds(H);
+    rel(sda); rel(scl);
+    return ack;
+}
+
+// Hardware-Wire single-address probe (Wire must be attached).
+static bool hwProbe(uint8_t addr) {
+    Wire.beginTransmission(addr);
+    return Wire.endTransmission() == 0;
 }
 
 bool NFC::begin() {
-    // CN3's SDA/SCL orientation isn't fixed — try the configured order, then
-    // the swap. Whichever the PN532 answers on wins.
-    if (tryInit(NFC_SDA_PIN, NFC_SCL_PIN) ||
-        tryInit(NFC_SCL_PIN, NFC_SDA_PIN)) {
+    // ---- Focused bus diagnostics ----
+    // 1. Baseline: is the FT6336 alive before we touch anything?
+    Serial.printf("[NFC] diag: touch 0x38 via hw Wire: %s\n",
+                  hwProbe(TOUCH_ADDR) ? "ACK" : "no ack");
+    Serial.printf("[NFC] diag: pn532 0x24 via hw Wire: %s\n",
+                  hwProbe(0x24) ? "ACK" : "no ack");
+
+    busToNfc();
+    pinMode(NFC_SDA_PIN, INPUT_PULLUP);
+    pinMode(NFC_SCL_PIN, INPUT_PULLUP);
+    delay(5);
+    Serial.printf("[NFC] diag: idle GPIO%d=%d GPIO%d=%d\n",
+                  NFC_SDA_PIN, digitalRead(NFC_SDA_PIN),
+                  NFC_SCL_PIN, digitalRead(NFC_SCL_PIN));
+
+    // 2. One bit-bang probe of 0x24 only.
+    Serial.printf("[NFC] diag: pn532 0x24 bit-bang (SDA=%d SCL=%d): %s\n",
+                  NFC_SDA_PIN, NFC_SCL_PIN,
+                  bbProbe(NFC_SDA_PIN, NFC_SCL_PIN, 0x24) ? "ACK" : "no ack");
+
+    // 3. Did that traffic wedge a line? Does it self-clear after 1s?
+    pinMode(NFC_SDA_PIN, INPUT_PULLUP);
+    pinMode(NFC_SCL_PIN, INPUT_PULLUP);
+    delay(5);
+    Serial.printf("[NFC] diag: post-probe idle GPIO%d=%d GPIO%d=%d",
+                  NFC_SDA_PIN, digitalRead(NFC_SDA_PIN),
+                  NFC_SCL_PIN, digitalRead(NFC_SCL_PIN));
+    delay(1000);
+    Serial.printf(" | after 1s: GPIO%d=%d GPIO%d=%d\n",
+                  NFC_SDA_PIN, digitalRead(NFC_SDA_PIN),
+                  NFC_SCL_PIN, digitalRead(NFC_SCL_PIN));
+
+    // 4. Did the touch controller survive our bit-bang traffic?
+    busToTouch();
+    Serial.printf("[NFC] diag: touch 0x38 after bit-bang: %s\n",
+                  hwProbe(TOUCH_ADDR) ? "ACK" : "no ack");
+
+    // The IIC socket's SDA/SCL orientation isn't fixed — try the configured
+    // order, then the swap. Whichever the PN532 answers on wins.
+    busToNfc();
+    bool ok = tryInit(NFC_SDA_PIN, NFC_SCL_PIN) ||
+              tryInit(NFC_SCL_PIN, NFC_SDA_PIN);
+    busToTouch();
+    if (ok) {
         _ready = true;
         return true;
     }
 
     Serial.println("[NFC] PN532 not responding on either SDA/SCL ordering");
-    Serial.println("[NFC] Check: DIP switches in I2C mode (1=ON,2=OFF)? Power LED on? CN3 cable?");
+    Serial.println("[NFC] Check: DIP switches in I2C mode (1=ON,2=OFF)? Power LED on? IIC cable?");
     _ready = false;
     return false;
 }
@@ -244,8 +378,9 @@ bool NFC::readCard(String& outUid, String& outNdefUrl) {
     if (millis() - _lastReadMs < 200) return false;
     _lastReadMs = millis();
 
-    // Everything below bit-bangs GPIO7/8; route to a single exit so we always
-    // hand the shared bus back to the touch panel afterwards.
+    // Everything below bit-bangs the shared touch bus; route to a single exit
+    // so we always hand the bus back to the FT6336 afterwards.
+    busToNfc();
     bool found = false;
     uint8_t uid[10];
     uint8_t uidLen = 0;
@@ -282,5 +417,6 @@ bool NFC::readCard(String& outUid, String& outNdefUrl) {
         found = true;
     }
 
+    busToTouch();
     return found;
 }
