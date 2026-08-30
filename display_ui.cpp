@@ -1,4 +1,5 @@
 #include "display_ui.h"
+#include "money_fmt.h"
 #include "config.h"
 #include "setup_portal.h"
 #include "logo.h"
@@ -290,8 +291,8 @@ void DisplayUI::showSetupInfo() {
     // NFC diagnostic band (overwritten by showNfcTap on each card tap).
     drawCenteredText("Tap NFC card to test", SCREEN_WIDTH / 2, 537, 2, COL_DIM, COL_BG);
 
-    drawCenteredText("Enter WiFi details",       SCREEN_WIDTH / 2, 600, 2, COL_DIM, COL_BG);
-    drawCenteredText("and merchant API key",     SCREEN_WIDTH / 2, 640, 2, COL_DIM, COL_BG);
+    drawCenteredText("Enter WiFi details and",   SCREEN_WIDTH / 2, 600, 2, COL_DIM, COL_BG);
+    drawCenteredText("your payment provider",    SCREEN_WIDTH / 2, 640, 2, COL_DIM, COL_BG);
 
     // Test Print button — exercise the thermal printer without a real sale
     _gfx->fillRoundRect(TP_X, TP_Y, TP_W, TP_H, 10, COL_KEYPAD_BG);
@@ -337,7 +338,8 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
     _gfx->fillRoundRect(15, AMT_BOX_Y, SCREEN_WIDTH - 30, AMT_BOX_H, 8, COL_KEYPAD_BG);
     _gfx->drawRoundRect(15, AMT_BOX_Y, SCREEN_WIDTH - 30, AMT_BOX_H, 8, COL_ACCENT);
 
-    String disp = amount.isEmpty() ? "0.00" : amount;
+    const bool satsMode = (currency == "SATS");
+    String disp = amount.isEmpty() ? (satsMode ? "0" : "0.00") : amount;
     String right = disp + " " + currency;
 
     // GFXfont baseline-positioning: use getTextBounds + (x1,y1) so "$" and
@@ -346,10 +348,13 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
     int16_t x1, y1; uint16_t w, h;
 
     applyPosFont(_gfx, 4);
-    _gfx->setTextColor(COL_ACCENT, COL_KEYPAD_BG);
-    _gfx->getTextBounds("$", 0, 0, &x1, &y1, &w, &h);
-    _gfx->setCursor(30 - x1, boxCy - h / 2 - y1);
-    _gfx->print("$");
+    const char* prefix = currencyPrefix(currency);   // "" for SATS / EUR / …
+    if (*prefix) {
+        _gfx->setTextColor(COL_ACCENT, COL_KEYPAD_BG);
+        _gfx->getTextBounds(prefix, 0, 0, &x1, &y1, &w, &h);
+        _gfx->setCursor(30 - x1, boxCy - h / 2 - y1);
+        _gfx->print(prefix);
+    }
 
     _gfx->setTextColor(COL_FG, COL_KEYPAD_BG);
     _gfx->getTextBounds(right.c_str(), 0, 0, &x1, &y1, &w, &h);
@@ -362,6 +367,7 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
             for (int c = 0; c < KP_COLS; c++) {
                 const char* lbl = KP[r][c];
                 if (strlen(lbl) == 0) continue;
+                if (satsMode && strcmp(lbl, ".") == 0) continue;   // whole sats only
 
                 int x = KP_X0 + c * (KP_BW + KP_GAP);
                 int y = KP_Y0 + r * (KP_BH + KP_GAP);
@@ -385,14 +391,14 @@ void DisplayUI::showLoading(const String& message) {
 }
 
 void DisplayUI::showQR(const String& bolt11, uint64_t sats, float nzd,
-                       int secsLeft, int refreshCount) {
+                       int secsLeft, int refreshCount, const String& currency) {
     _screen = Screen::QR_DISPLAY;
     _gfx->fillScreen(COL_BG);
 
-    // Amount at top
-    if (nzd > 0) {
-        char s[16]; snprintf(s, sizeof(s), "$%.2f NZD", nzd);
-        drawCenteredText(s, SCREEN_WIDTH / 2, 30, 4, COL_ACCENT, COL_BG);
+    // Amount at top: fiat, or the sats figure itself in sats mode.
+    if (nzd > 0 || currency == "SATS") {
+        drawCenteredText(formatAmount(nzd, sats, currency),
+                         SCREEN_WIDTH / 2, 30, 4, COL_ACCENT, COL_BG);
     }
 
     // QR in middle
@@ -403,9 +409,11 @@ void DisplayUI::showQR(const String& bolt11, uint64_t sats, float nzd,
     qrData.toUpperCase();
     drawQRCode(qrData, qrX, qrY, qrSize);
 
-    // Info under QR
-    char satStr[32]; snprintf(satStr, sizeof(satStr), "%lu sats", (unsigned long)sats);
-    drawCenteredText(satStr, SCREEN_WIDTH / 2, 560, 2, COL_FG, COL_BG);
+    // Info under QR (already the headline figure in sats mode)
+    if (currency != "SATS") {
+        char satStr[32]; snprintf(satStr, sizeof(satStr), "%lu sats", (unsigned long)sats);
+        drawCenteredText(satStr, SCREEN_WIDTH / 2, 560, 2, COL_FG, COL_BG);
+    }
 
     _gfx->drawFastHLine(30, 600, SCREEN_WIDTH - 60, COL_DIM);
 
@@ -425,7 +433,10 @@ void DisplayUI::updateTimer(int secsLeft, int refreshCount) {
     // Clear only down to 732 so the Cancel button (y 742+) is never touched.
     _gfx->fillRect(0, 658, SCREEN_WIDTH, 74, COL_BG);
 
-    char t[8]; snprintf(t, sizeof(t), ":%02d", secsLeft);
+    // ":45" under a minute, "4:59" above (self-custody invoices run longer).
+    char t[12];
+    if (secsLeft >= 60) snprintf(t, sizeof(t), "%d:%02d", secsLeft / 60, secsLeft % 60);
+    else                snprintf(t, sizeof(t), ":%02d", secsLeft);
     drawCenteredText(t, SCREEN_WIDTH / 2, 684, 4,
                      secsLeft < 10 ? COL_ERROR : COL_FG, COL_BG);
 
@@ -448,11 +459,11 @@ void DisplayUI::showPaid(uint64_t sats, float nzd, const String& currency) {
 
     drawCenteredText("PAID", cx, 380, 7, COL_ACCENT, COL_BG);
 
-    char info[64];
-    if (nzd > 0) snprintf(info, sizeof(info), "$%.2f %s", nzd, currency.c_str());
-    else         snprintf(info, sizeof(info), "%lu sats", (unsigned long)sats);
-    drawCenteredText(info, cx, 490, 3, COL_FG, COL_BG);
-    if (nzd > 0) {
+    const bool fiat = (nzd > 0 && currency != "SATS");
+    drawCenteredText(fiat ? formatAmount(nzd, sats, currency)
+                          : formatAmount(0, sats, "SATS"),
+                     cx, 490, 3, COL_FG, COL_BG);
+    if (fiat) {
         char s[32]; snprintf(s, sizeof(s), "%lu sats", (unsigned long)sats);
         drawCenteredText(s, cx, 540, 2, COL_DIM, COL_BG);
     }
@@ -474,6 +485,81 @@ void DisplayUI::showWifiError(const String& ssid) {
     drawCenteredText("Retrying...", cx, 400, 3, COL_FG, COL_BG);
     drawCenteredText("Hold reset button", cx, 540, 2, COL_DIM, COL_BG);
     drawCenteredText("to reconfigure WiFi", cx, 580, 2, COL_DIM, COL_BG);
+}
+
+void DisplayUI::showBootError(const String& title, const String& subject,
+                              const String& reason, bool retrying) {
+    _screen = Screen::ERROR;
+    _gfx->fillScreen(COL_BG);
+    _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ERROR);
+    _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ERROR);
+
+    int cx = SCREEN_WIDTH / 2;
+    // This screen does its own line breaking; GFX auto-wrap would otherwise
+    // fold an over-wide token onto the next row at the wrong pitch.
+    _gfx->setTextWrap(false);
+    int16_t x1, y1; uint16_t w, h;
+
+    // Title: drop a size if it won't fit on one line ("Bad Lightning
+    // Address" is 513 px at size 4 on a 480 px panel).
+    applyPosFont(_gfx, 4);
+    _gfx->getTextBounds(title.c_str(), 0, 0, &x1, &y1, &w, &h);
+    drawCenteredText(title, cx, 150, ((int)w > SCREEN_WIDTH - 20) ? 3 : 4,
+                     COL_ERROR, COL_BG);
+
+    // The configured address — the thing the merchant needs to read. Long
+    // ones split at '@'; URL/bech32 forms get their middle elided.
+    if (subject.length()) {
+        applyPosFont(_gfx, 2);
+        _gfx->getTextBounds(subject.c_str(), 0, 0, &x1, &y1, &w, &h);
+        int at = subject.indexOf('@');
+        if ((int)w <= SCREEN_WIDTH - 40) {
+            drawCenteredText(subject, cx, 230, 2, COL_DIM, COL_BG);
+        } else if (at > 0) {
+            drawCenteredText(subject.substring(0, at + 1), cx, 215, 2, COL_DIM, COL_BG);
+            drawCenteredText(subject.substring(at + 1),    cx, 247, 2, COL_DIM, COL_BG);
+        } else {
+            // Shrink the kept head/tail until the elided form fits one line
+            // (upper-case bech32 is ~2x wider than lower-case).
+            int keep = (int)subject.length() / 2 - 2;
+            if (keep > 16) keep = 16;
+            String shown;
+            do {
+                shown = subject.substring(0, keep) + "..." +
+                        subject.substring(subject.length() - keep);
+                _gfx->getTextBounds(shown.c_str(), 0, 0, &x1, &y1, &w, &h);
+            } while ((int)w > SCREEN_WIDTH - 40 && --keep > 3);
+            drawCenteredText(shown, cx, 230, 2, COL_DIM, COL_BG);
+        }
+    }
+
+    // Reason, wrapped onto up to four lines at word boundaries (an
+    // unbreakable over-wide token is hard-broken by character).
+    applyPosFont(_gfx, 2);
+    String rest = reason;
+    int y = 300;
+    for (int line = 0; line < 4 && rest.length(); line++) {
+        String take = rest;
+        _gfx->getTextBounds(take.c_str(), 0, 0, &x1, &y1, &w, &h);
+        while ((int)w > SCREEN_WIDTH - 40) {
+            int sp = take.lastIndexOf(' ');
+            if (sp > 0) take = take.substring(0, sp);
+            else if (take.length() > 1) take.remove(take.length() - 1);
+            else break;
+            _gfx->getTextBounds(take.c_str(), 0, 0, &x1, &y1, &w, &h);
+        }
+        drawCenteredText(take, cx, y, 2, COL_FG, COL_BG);
+        rest = rest.substring(take.length());
+        rest.trim();
+        y += 36;
+    }
+
+    drawCenteredText(retrying ? "Retrying..." : "This wallet can't be used",
+                     cx, 470, 3, retrying ? COL_FG : COL_ERROR, COL_BG);
+
+    drawCenteredText("Tap screen: re-enter setup", cx, 600, 2, COL_ACCENT, COL_BG);
+    drawCenteredText("Hold BOOT 5 s: factory reset", cx, 640, 2, COL_DIM, COL_BG);
+    _gfx->setTextWrap(true);   // other screens rely on the default
 }
 
 void DisplayUI::showScreensaver() {
@@ -594,6 +680,14 @@ void DisplayUI::showTransactionHistory(const HistoryData& d,
                      COL_ACCENT, COL_BG);
 
     if (!d.ok) {
+        if (d.error.indexOf("not supported") >= 0) {
+            // Not a fault — the provider simply has no history endpoint
+            // (BTCPay, self-custody). Point at where the records live.
+            drawCenteredText("No history here", SCREEN_WIDTH / 2, 360, 4, COL_DIM, COL_BG);
+            drawCenteredText("See your wallet / server for sales",
+                             SCREEN_WIDTH / 2, 430, 2, COL_DIM, COL_BG);
+            return;
+        }
         String msg = d.error == "Clock not set" ? "Clock not synced yet" : d.error;
         drawCenteredText("Couldn't load", SCREEN_WIDTH / 2, 360, 4, COL_ERROR, COL_BG);
         drawCenteredText(msg, SCREEN_WIDTH / 2, 430, 2, COL_DIM, COL_BG);
@@ -622,8 +716,8 @@ void DisplayUI::showTransactionHistory(const HistoryData& d,
 
     // Summary line: how many taken + paid total for the period.
     char summary[64];
-    snprintf(summary, sizeof(summary), "%d txns  -  %d paid  -  $%.2f %s",
-             count, paidCount, paidNzd, currency.c_str());
+    snprintf(summary, sizeof(summary), "%d txns  -  %d paid  -  %s%.2f %s",
+             count, paidCount, currencyPrefix(currency), paidNzd, currency.c_str());
     drawCenteredText(summary, SCREEN_WIDTH / 2, 118, 2, COL_ACCENT, COL_BG);
     _gfx->drawFastHLine(TXL_XL, 134, SCREEN_WIDTH - 2 * TXL_XL, COL_DIM);
 
@@ -655,7 +749,7 @@ void DisplayUI::showTransactionHistory(const HistoryData& d,
             strftime(when, sizeof(when), "%a %d %b %H:%M", &lt);
         }
         char money[16];
-        snprintf(money, sizeof(money), "$%.2f", r.nzdAmount);
+        snprintf(money, sizeof(money), "%s%.2f", currencyPrefix(currency), r.nzdAmount);
 
         // Left: date over amount. Right of that (before the button): the
         // recorded paid state + sats. Far right: the Check button.
@@ -908,20 +1002,70 @@ Key DisplayUI::hitTest(int tx, int ty) {
 // ============================================================
 // QR rendering
 // ============================================================
-void DisplayUI::drawQRCode(const String& data, int x, int y, int areaSize) {
+// Alphanumeric-mode capacity at ECC L for QR versions 1..40 (ISO 18004
+// table 7). Used to pick the smallest version that holds the invoice.
+static const uint16_t QR_ALNUM_CAP_L[40] = {
+      25,   47,   77,  114,  154,  195,  224,  279,  335,  395,
+     468,  535,  619,  667,  758,  854,  938, 1046, 1153, 1249,
+    1352, 1460, 1588, 1704, 1853, 1990, 2132, 2223, 2369, 2520,
+    2677, 2840, 3009, 3183, 3351, 3537, 3729, 3927, 4087, 4296 };
+
+// The capacity table only holds for QR alphanumeric mode (0-9 A-Z and
+// " $%*+-./:"). Anything else makes the encoder fall back to byte mode
+// with much less room — and this library has NO overflow check (its
+// qrcode.c literally says "@TODO: Return error if data is too big"), so
+// oversize input silently produces an unscannable QR or scribbles past a
+// stack buffer. Every gate therefore has to happen before it's called.
+static bool isQrAlphanumeric(const String& s) {
+    for (size_t i = 0; i < s.length(); i++) {
+        char c = s[i];
+        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+            strchr(" $%*+-./:", c)) continue;
+        return false;
+    }
+    return true;
+}
+
+static_assert(QR_MAX_VERSION >= QR_VERSION && QR_MAX_VERSION <= 40, "QR version range");
+static_assert(QR_MAX_CHARS == 1249, "QR_MAX_CHARS must match QR_ALNUM_CAP_L[QR_MAX_VERSION-1]");
+
+bool DisplayUI::drawQRCode(const String& data, int x, int y, int areaSize) {
+    _gfx->fillRect(x - 8, y - 8, areaSize + 16, areaSize + 16, 0xFFFF);
+
+    // Smallest version in [QR_VERSION, QR_MAX_VERSION] with room for the
+    // data. Decided here, up front — see the note above.
+    int version = QR_VERSION;
+    while (version < QR_MAX_VERSION &&
+           data.length() > QR_ALNUM_CAP_L[version - 1]) version++;
+
+    if (!isQrAlphanumeric(data) ||
+        data.length() > QR_ALNUM_CAP_L[QR_MAX_VERSION - 1]) {
+        Serial.printf("[QR] cannot encode %u chars (max version %d, alnum=%d)\n",
+                      (unsigned)data.length(), QR_MAX_VERSION, isQrAlphanumeric(data));
+        drawCenteredText("Invoice too long",  x + areaSize / 2, y + areaSize / 2 - 24, 3, COL_ERROR, 0xFFFF);
+        drawCenteredText("to show as QR",     x + areaSize / 2, y + areaSize / 2 + 24, 3, COL_ERROR, 0xFFFF);
+        return false;
+    }
+
     QRCode qr;
-    uint8_t buf[qrcode_getBufferSize(QR_VERSION)];
-    qrcode_initText(&qr, buf, QR_VERSION, QR_ECC_LEVEL, data.c_str());
+    // qrcode_getBufferSize(v20) = 1177 bytes; the encoder adds ~3.3 KB more
+    // of VLAs — main.cpp grows the loop task's stack to make room.
+    uint8_t buf[qrcode_getBufferSize(QR_MAX_VERSION)];
+    qrcode_initText(&qr, buf, version, QR_ECC_LEVEL, data.c_str());
+
+    if (version != QR_VERSION) {
+        Serial.printf("[QR] %u chars -> version %d (%d modules)\n",
+                      (unsigned)data.length(), version, qr.size);
+    }
 
     int modPx = areaSize / qr.size;
     int totalPx = modPx * qr.size;
     int ox = x + (areaSize - totalPx) / 2;
     int oy = y + (areaSize - totalPx) / 2;
 
-    _gfx->fillRect(x - 8, y - 8, areaSize + 16, areaSize + 16, 0xFFFF);
-
     for (uint8_t qy = 0; qy < qr.size; qy++)
         for (uint8_t qx = 0; qx < qr.size; qx++)
             if (qrcode_getModule(&qr, qx, qy))
                 _gfx->fillRect(ox + qx * modPx, oy + qy * modPx, modPx, modPx, 0x0000);
+    return true;
 }

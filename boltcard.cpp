@@ -3,14 +3,17 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+#include "tls_bundle.h"
 
-// NOTE: setInsecure() — we skip TLS cert validation because a Boltcard's
-// LNURLW lives on an arbitrary domain we can't pin a CA for. Acceptable for
-// getting the flow working; harden later with a CA bundle if needed.
+// A Boltcard's LNURLW lives on an arbitrary public domain, so validate its
+// certificate against the root-CA bundle (any host a phone wallet can use
+// has a publicly trusted cert). An on-path attacker who could read the
+// card's one-time SUN parameters would otherwise be able to replay them
+// with their own invoice.
 static String httpsGet(const String& url, int& codeOut) {
     HTTPClient http;
     WiFiClientSecure client;
-    client.setInsecure();
+    useRootCaBundle(client);
     client.setTimeout(15);
     client.setHandshakeTimeout(15);
 
@@ -30,10 +33,12 @@ BoltcardResult boltcardPay(const String& lnurlwUrl, const String& bolt11) {
     if (bolt11.isEmpty()) { r.error = "No invoice"; return r; }
 
     // 1) Normalise scheme: lnurlw:// (and lnurl://) map to https://.
+    //    Plain http is refused outright (the TLS client couldn't speak it
+    //    anyway — better a clear error than "unreachable").
     String url = lnurlwUrl;
     if      (url.startsWith("lnurlw://")) url = "https://" + url.substring(9);
     else if (url.startsWith("lnurl://"))  url = "https://" + url.substring(8);
-    else if (!url.startsWith("http"))     { r.error = "Not an LNURLW"; return r; }
+    else if (!url.startsWith("https://")) { r.error = "Card URL must be https"; return r; }
 
     Serial.printf("[BOLT] Resolving withdraw request: %s\n", url.c_str());
 
@@ -61,6 +66,7 @@ BoltcardResult boltcardPay(const String& lnurlwUrl, const String& bolt11) {
     String callback = doc["callback"] | "";
     String k1       = doc["k1"] | "";
     if (callback.isEmpty() || k1.isEmpty()) { r.error = "Card missing callback/k1"; return r; }
+    if (!callback.startsWith("https://")) { r.error = "Card callback not https"; return r; }
 
     // 3) Submit the invoice to the callback (bolt11 + k1 are URL-safe).
     String cbUrl = callback + (callback.indexOf('?') >= 0 ? "&" : "?") +

@@ -25,6 +25,8 @@ struct MerchantInvoice {
     String   reference;       // Provider's handle for poll + refresh
     float    nzdAmount;       // Fiat amount (active currency)
     uint64_t satAmount;
+    int      expirySec;       // Seconds this bolt11 is valid for; 0 = use
+                              // the POS default (INVOICE_EXPIRY_SEC)
     String   error;
 };
 
@@ -88,6 +90,11 @@ public:
     /// Merchant profile (name/GST). ok == false if unsupported.
     virtual MerchantProfile getProfile() = 0;
 
+    /// Whether getTransactions() can return anything. Lets the history
+    /// screen show its "no history for this provider" notice without
+    /// first needing a synced clock. Default: no.
+    virtual bool supportsHistory() const { return false; }
+
     /// Fetch one page of transaction history within [fromIso, toIso]
     /// (ISO-8601 UTC). Providers that don't support history return
     /// ok == false (the default below) so the POS can show a notice.
@@ -102,4 +109,9 @@ public:
     virtual InvoiceState checkInvoiceState(const String& reference) {
         return InvoiceState::ERROR;
     }
+
+    /// The POS has left the sale (paid, cancelled, timed out, or error).
+    /// Providers that track per-sale state (e.g. the self-custody
+    /// provider's list of verify URLs) drop it here. Default no-op.
+    virtual void endSale() {}
 };

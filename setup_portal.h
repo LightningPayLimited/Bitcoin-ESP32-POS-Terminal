@@ -9,7 +9,8 @@
 // 1. Captive Portal (WiFi AP mode)
 //    - Device creates "StackedPOS-Setup" WiFi network
 //    - Merchant connects and opens 192.168.4.1
-//    - Web form: WiFi SSID, WiFi password, API key
+//    - Web form: WiFi SSID, WiFi password, then per provider: Stacked
+//      API key / BTCPay server + key / self-custody Lightning Address
 //    - Saves to NVS and reboots
 //
 // 2. Serial Config (Web Serial from Stacked webpage)

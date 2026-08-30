@@ -123,6 +123,7 @@
       <select id="provider" onchange="providerChanged()">
         <option value="stacked" selected>Stacked</option>
         <option value="btcpay">BTCPayServer</option>
+        <option value="lnaddress">Self-custody (Lightning Address)</option>
       </select>
 
       <label>WiFi Network</label>
@@ -160,6 +161,29 @@
           <option value="SATS">SATS</option>
         </select>
         <p class="hint">You'll pick the store on this device after it restarts</p>
+      </div>
+
+      <div id="lnaddr-fields" class="hidden">
+        <label>Lightning Address</label>
+        <input type="text" id="lnAddress" placeholder="you@walletprovider.com"
+               inputmode="email" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <p class="hint">Payments go straight to your own wallet — no account, no API key.
+          The wallet must support LNURL-pay <em>verify</em> (LUD-21): Alby, Coinos,
+          Stacked and LNbits do; Wallet of Satoshi does not.</p>
+        <label>Currency</label>
+        <select id="lnCurrency">
+          <option value="NZD" selected>NZD</option>
+          <option value="AUD">AUD</option>
+          <option value="USD">USD</option>
+          <option value="EUR">EUR</option>
+          <option value="GBP">GBP</option>
+          <option value="CAD">CAD</option>
+          <option value="JPY">JPY</option>
+          <option value="SATS">SATS (enter sats directly)</option>
+        </select>
+        <p class="hint">Fiat amounts are converted at the live Coinbase / CoinGecko rate</p>
+        <label>Store name (optional)</label>
+        <input type="text" id="storeName" placeholder="Shown on the splash screen and receipts" />
       </div>
 
       <button class="btn-send" id="btn-send" onclick="sendConfig()" disabled>
@@ -205,9 +229,18 @@ function log(msg) {
 }
 
 function providerChanged() {
-  const isBtcpay = document.getElementById('provider').value === 'btcpay';
-  document.getElementById('stacked-fields').classList.toggle('hidden', isBtcpay);
-  document.getElementById('btcpay-fields').classList.toggle('hidden', !isBtcpay);
+  const p = document.getElementById('provider').value;
+  document.getElementById('stacked-fields').classList.toggle('hidden', p !== 'stacked');
+  document.getElementById('btcpay-fields').classList.toggle('hidden', p !== 'btcpay');
+  document.getElementById('lnaddr-fields').classList.toggle('hidden', p !== 'lnaddress');
+}
+
+// user@domain, https://… / lnurlp://… URL, or a bech32 lnurl1… string
+function looksLikeLnAddress(v) {
+  v = v.replace(/^lightning:/i, '');
+  return /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?$/i.test(v) ||
+         /^(https:\/\/|lnurlp:\/\/)\S+$/i.test(v) ||
+         /^lnurl1[a-z0-9]+$/i.test(v);
 }
 
 function toggleManual() {
@@ -363,6 +396,15 @@ async function sendConfig() {
     }
     if (!apiKey) { setStatus('send-status', 'err', 'API key is required'); return; }
     config = JSON.stringify({ ssid, pass, provider: 'btcpay', btcpayUrl, apiKey, currency });
+  } else if (provider === 'lnaddress') {
+    const lnAddress = document.getElementById('lnAddress').value.trim();
+    const currency = document.getElementById('lnCurrency').value;
+    const storeName = document.getElementById('storeName').value.trim();
+    if (!looksLikeLnAddress(lnAddress)) {
+      setStatus('send-status', 'err', 'Enter a Lightning Address like you@walletprovider.com');
+      return;
+    }
+    config = JSON.stringify({ ssid, pass, provider: 'lnaddress', lnAddress, currency, storeName });
   } else {
     const apiKey = document.getElementById('apiKey').value.trim();
     if (!apiKey) { setStatus('send-status', 'err', 'API key is required'); return; }

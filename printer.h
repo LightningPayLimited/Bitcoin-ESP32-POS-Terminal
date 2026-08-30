@@ -19,14 +19,17 @@ public:
 
     /// Queue a payment receipt for printing. Returns immediately; the
     /// receipt is rendered on a background task. `currency` is the fiat
-    /// label to print (e.g. "NZD", "USD").
+    /// label to print (e.g. "NZD", "USD"). `payee`, when given, prints a
+    /// "Paid to:" line (self-custody: the Lightning Address the money
+    /// went to).
     void printReceipt(const String& merchantName,
                       const String& gstNumber,
                       const String& currency,
                       float          fiatAmount,
                       uint64_t       satAmount,
                       const String&  reference,
-                      const String&  paidDate);
+                      const String&  paidDate,
+                      const String&  payee = "");
 
     bool ready() const { return _ready; }
 

@@ -3,16 +3,20 @@
 // ============================================================
 //
 // Boot flow:
-//   1. Check NVS for saved config (WiFi + API key)
+//   1. Check NVS for saved config (WiFi + provider settings)
 //   2. If not provisioned → start captive portal for setup
-//   3. If provisioned → connect WiFi → enter POS mode
+//   3. If provisioned → connect WiFi → init provider → enter POS mode
 //
-// POS flow:
-//   1. Numpad → merchant enters $NZD amount
-//   2. PAY → POST /api/merchant/payment with NZD amount
-//   3. Show QR (bolt11) → poll status every 1.5s
-//   4. Invoice expires in 60s → auto-refresh via txRef
-//   5. paidDate set → success screen → back to numpad
+// POS flow (identical for every provider — see payment_provider.h):
+//   1. Numpad → merchant enters a fiat amount
+//   2. PAY → api->createInvoice()
+//   3. Show QR (bolt11) → api->checkPayment() every 3s
+//   4. Invoice expires (60s) → api->refreshInvoice()
+//   5. Paid → success screen + receipt → back to numpad
+//
+// Providers: Stacked (merchant API), BTCPay Server (Greenfield), or
+// self-custody (the merchant's own Lightning Address via LNURL-pay, with
+// settlement confirmed through the LUD-21 verify URL).
 //
 // Provisioning:
 //   - First boot: captive portal at 192.168.4.1
@@ -32,6 +36,9 @@
 #include "tx_history.h"
 #include "stacked_api.h"
 #include "btcpay_api.h"
+#include "lnaddress_api.h"
+#include "money_fmt.h"
+#include "fiat_rate.h"
 #include "printer.h"
 #include "nfc.h"
 #include "boltcard.h"
@@ -57,6 +64,10 @@ enum class State {
     TXN_HISTORY,       // Transaction history / takings screen
 };
 
+// The loop task hosts TLS handshakes, ArduinoJson and the QR encoder's
+// stack VLAs (~4.5 KB at QR_MAX_VERSION); the 8 KB default is too tight.
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
+
 static State        state = State::BOOT;
 static ConfigStore  config;
 static SetupPortal  portal;
@@ -66,6 +77,7 @@ DisplayUI           ui;  // non-static — referenced from setup_portal.cpp
 // Payment backend — one of these is selected at boot based on saved config.
 static StackedAPI       stackedApi;
 static BTCPayAPI        btcpayApi;
+static LnAddressAPI     lnaddrApi;
 static PaymentProvider* api = nullptr;
 
 // Fiat currency label shown on the numpad + receipts (NZD for Stacked,
@@ -77,7 +89,9 @@ static String enteredAmount = "";
 static float  activeNzd = 0;
 
 static MerchantInvoice activeInvoice;
+static int             invoiceExpirySec = INVOICE_EXPIRY_SEC;  // per-invoice, see setActiveInvoice()
 static unsigned long   invoiceCreatedAt = 0;
+static unsigned long   saleStartedAt = 0;   // first invoice of this sale
 static unsigned long   lastPollAt = 0;
 static int             refreshCount = 0;
 static bool            boltcardSubmitted = false;  // invoice handed to a Boltcard
@@ -90,6 +104,19 @@ static unsigned long   lastActivityAt = 0;
 static bool checkFactoryResetButton();
 static void wifiRetryWaitMs(unsigned long ms, const String& ssid);
 static void resolveBTCPayStore();
+static void resolveLnAddress();
+
+// Config JSON arriving over serial after boot is saved by checkSerial();
+// reboot so it actually takes effect (setup.html tells the merchant the
+// terminal will restart — the captive portal already does this).
+static void pollSerialConfig() {
+    if (portal.checkSerial(config)) {
+        Serial.println("[SYS] New config received over serial — rebooting");
+        Serial.flush();
+        delay(500);
+        ESP.restart();
+    }
+}
 
 #if NFC_BUS_PROBE
 // ================================================================
@@ -265,8 +292,34 @@ void resetToIdle() {
     refreshCount = 0;
     boltcardSubmitted = false;
     activeInvoice = {};
+    if (api) api->endSale();
     lastActivityAt = millis();
     ui.showAmountEntry(enteredAmount, currencyLabel);
+}
+
+// Adopt a freshly created/refreshed invoice as the live one.
+static void setActiveInvoice(const MerchantInvoice& inv) {
+    activeInvoice    = inv;
+    invoiceCreatedAt = millis();
+    lastPollAt       = 0;
+    invoiceExpirySec = inv.expirySec > 0 ? inv.expirySec : INVOICE_EXPIRY_SEC;
+}
+
+static void showActiveQR() {
+    ui.showQR(activeInvoice.paymentRequest,
+              activeInvoice.satAmount,
+              activeInvoice.nzdAmount > 0 ? activeInvoice.nzdAmount : activeNzd,
+              invoiceExpirySec,
+              refreshCount,
+              currencyLabel);
+}
+
+// Human-readable sale description sent to the provider (Stacked shows it
+// in the dashboard; the self-custody provider passes it as the LNURL
+// comment so the sale is labelled in the merchant's wallet).
+static String saleDetails() {
+    String amt = formatAmount(activeNzd, (uint64_t)(activeNzd + 0.5f), currencyLabel);
+    return merchantName.length() > 0 ? merchantName + " " + amt : amt;
 }
 
 // Fetch + show the transaction-history screen. Blocks while paging the API
@@ -289,13 +342,19 @@ void openTransactionHistory() {
 }
 
 void handleKey(Key k) {
+    // Sats mode (self-custody with currency "SATS"): whole sats only, up to
+    // 7 digits (< 0.1 BTC, and exact in the float that carries the amount).
+    const bool satsMode = (currencyLabel == "SATS");
+
     char ch = keyChar(k);
     if (ch) {
         int dot = enteredAmount.indexOf('.');
         if (dot >= 0 && (int)enteredAmount.length() - dot > 2) return;
-        if (enteredAmount.length() >= 10) return;
+        if (enteredAmount.length() >= (satsMode ? 7u : 10u)) return;
+        if (satsMode && enteredAmount == "0") enteredAmount = "";   // no leading zeros
         enteredAmount += ch;
     } else if (k == Key::DOT) {
+        if (satsMode) return;
         if (enteredAmount.indexOf('.') < 0) {
             if (enteredAmount.isEmpty()) enteredAmount = "0";
             enteredAmount += ".";
@@ -306,11 +365,17 @@ void handleKey(Key k) {
     } else if (k == Key::CLEAR) {
         enteredAmount = "";
     } else if (k == Key::CHARGE) {
-        float nzd = enteredAmount.toFloat();
-        // Compare in integer cents to avoid float-precision rejection of 0.01
-        int cents = (int)(nzd * 100.0f + 0.5f);
-        if (cents < 1) return;  // Min 1 cent
-        activeNzd = cents / 100.0f;
+        if (satsMode) {
+            unsigned long sats = strtoul(enteredAmount.c_str(), nullptr, 10);
+            if (sats < 1) return;
+            activeNzd = (float)sats;
+        } else {
+            float nzd = enteredAmount.toFloat();
+            // Compare in integer cents to avoid float-precision rejection of 0.01
+            int cents = (int)(nzd * 100.0f + 0.5f);
+            if (cents < 1) return;  // Min 1 cent
+            activeNzd = cents / 100.0f;
+        }
         state = State::CREATING_INVOICE;
         return;
     } else {
@@ -476,7 +541,7 @@ void setup() {
         } else {
             Serial.print(".");
         }
-        portal.checkSerial(config);
+        pollSerialConfig();
         tries++;
     }
     Serial.println();
@@ -510,7 +575,7 @@ void setup() {
         int tries = 0;
         while (WiFi.status() != WL_CONNECTED && tries < 40) {
             delay(500);
-            portal.checkSerial(config);
+            pollSerialConfig();
             if (checkFactoryResetButton()) {
                 ui.showWifiError(config.ssid());
             }
@@ -549,6 +614,18 @@ void setup() {
         if (config.storeId().isEmpty()) {
             resolveBTCPayStore();
         }
+    } else if (config.provider() == Provider::LNADDRESS) {
+        lnaddrApi.begin(config.lnAddress(), config.currency(), config.storeName());
+        api = &lnaddrApi;
+        currencyLabel = config.currency();
+        currencyLabel.toUpperCase();
+        Serial.printf("[BOOT] Provider: Lightning Address (%s, %s)\n",
+                      config.lnAddress().c_str(), currencyLabel.c_str());
+
+        // Resolve the address and make sure the wallet can confirm
+        // payments (LUD-21). Loops on the error screen until it works —
+        // or parks on a "use another wallet" screen if it never can.
+        resolveLnAddress();
     } else {
         stackedApi.begin(STACKED_API_BASE, config.apiKey());
         api = &stackedApi;
@@ -570,7 +647,7 @@ void setup() {
 
     // Ready
     resetToIdle();
-    Serial.println("[POS] Ready — enter NZD amount");
+    Serial.printf("[POS] Ready — enter %s amount\n", currencyLabel.c_str());
 }
 
 // ================================================================
@@ -646,7 +723,7 @@ static bool checkFactoryResetButton() {
 static void wifiRetryWaitMs(unsigned long ms, const String& ssid) {
     unsigned long t0 = millis();
     while (millis() - t0 < ms) {
-        portal.checkSerial(config);
+        pollSerialConfig();
         if (checkFactoryResetButton()) {
             ui.showWifiError(ssid);
         }
@@ -673,7 +750,7 @@ static void resolveBTCPayStore() {
         // mistyped URL/key can be wiped without a power cycle.
         unsigned long t0 = millis();
         while (millis() - t0 < 5000) {
-            portal.checkSerial(config);
+            pollSerialConfig();
             checkFactoryResetButton();
             delay(50);
         }
@@ -697,7 +774,7 @@ static void resolveBTCPayStore() {
         sel = -1;
         while (sel < 0) {
             sel = ui.pollStoreSelect(n);
-            portal.checkSerial(config);
+            pollSerialConfig();
             checkFactoryResetButton();
             delay(20);
         }
@@ -709,9 +786,97 @@ static void resolveBTCPayStore() {
                   stores[sel].name.c_str(), stores[sel].id.c_str());
 }
 
+// Self-custody boot check.
+//
+// First boot after provisioning (address not yet verified): resolve the
+// Lightning Address (LUD-16/06) and ask the wallet for a minimum invoice
+// to confirm it returns a LUD-21 verify URL — without that the POS could
+// never see a payment. Strict: loops on an error screen until it works.
+//   - network / wallet failure → retry every 5 s
+//   - wallet lacks verify      → parked; this wallet can't be used
+// Either screen offers: tap → back to the setup portal, pre-filled with
+// everything but passwords (a typo'd address shouldn't cost a factory
+// reset), or hold BOOT 5 s → factory reset.
+//
+// Later boots (verified): resolve once, best-effort. If the wallet host
+// is down the numpad still comes up and the provider re-resolves at PAY.
+static void bootErrorWait(unsigned long ms, const String& title,
+                          const String& reason, bool retrying) {
+    unsigned long t0 = millis();
+    while (millis() - t0 < ms) {
+        pollSerialConfig();
+        if (checkFactoryResetButton()) {
+            ui.showBootError(title, config.lnAddress(), reason, retrying);
+        }
+        if (ui.anyTouch()) {
+            Serial.println("[BOOT] Tap — re-entering setup (form pre-filled)");
+            ui.showLoading("Back to setup...");
+            config.markUnprovisioned();
+            delay(500);
+            ESP.restart();
+        }
+        delay(50);
+    }
+}
+
+static void resolveLnAddress() {
+    String err;
+
+    // A locally malformed address never reaches the network — park on it
+    // instead of "retrying" a request that will never be made.
+    if (!lnaddrApi.validate(err)) {
+        Serial.printf("[BOOT] Bad Lightning Address: %s\n", err.c_str());
+        String reason = err + ". Tap to go back to setup and fix it.";
+        ui.showBootError("Bad Lightning Address", config.lnAddress(), reason, false);
+        for (;;) bootErrorWait(60000, "Bad Lightning Address", reason, false);
+    }
+
+    if (config.lnVerified()) {
+        ui.showLoading("Checking wallet...");
+        if (!lnaddrApi.resolve(err)) {
+            Serial.printf("[BOOT] Lightning Address resolve failed (%s) — "
+                          "will retry at first sale\n", err.c_str());
+        }
+    } else {
+        ui.showLoading("Checking wallet...");
+        while (!lnaddrApi.resolve(err)) {
+            Serial.printf("[BOOT] Lightning Address failed: %s — retrying\n", err.c_str());
+            ui.showBootError("Wallet check failed", config.lnAddress(), err, true);
+            bootErrorWait(5000, "Wallet check failed", err, true);
+            ui.showLoading("Checking wallet...");
+        }
+        Serial.printf("[BOOT] Lightning Address OK: %s\n", lnaddrApi.endpoint().c_str());
+
+        for (;;) {
+            LnAddressAPI::Probe p = lnaddrApi.probeVerifySupport(err);
+            if (p == LnAddressAPI::Probe::OK) {
+                config.saveLnVerified();
+                break;
+            }
+            if (p == LnAddressAPI::Probe::UNSUPPORTED) {
+                Serial.printf("[BOOT] %s — this wallet can't be used\n", err.c_str());
+                String reason = err + ". The POS can't confirm payments from this "
+                                "wallet. Use one with LUD-21 (Alby, Coinos, Stacked, LNbits).";
+                ui.showBootError("Wallet not supported", config.lnAddress(), reason, false);
+                for (;;) bootErrorWait(60000, "Wallet not supported", reason, false);
+            }
+            Serial.printf("[BOOT] verify probe failed: %s — retrying\n", err.c_str());
+            ui.showBootError("Wallet check failed", config.lnAddress(), err, true);
+            bootErrorWait(5000, "Wallet check failed", err, true);
+            ui.showLoading("Checking wallet...");
+        }
+    }
+
+    // Warm the rate cache so the first PAY is one network call, not two.
+    if (config.currency() != "SATS") {
+        RateResult r = fetchBtcRate(config.currency());
+        if (!r.ok) Serial.printf("[BOOT] rate warm-up failed: %s\n", r.error.c_str());
+    }
+}
+
 void loop() {
     // Always check for serial commands (RESET, config JSON)
-    portal.checkSerial(config);
+    pollSerialConfig();
     // Firmware update portal (/update) — non-blocking when idle
     fwPortal.handle();
     if (checkFactoryResetButton()) {
@@ -759,34 +924,27 @@ void loop() {
         }
         ui.showLoading("Creating invoice...");
 
-        String details = merchantName.length() > 0
-            ? merchantName + " $" + String(activeNzd, 2) + " NZD"
-            : "$" + String(activeNzd, 2) + " NZD";
+        Serial.printf("[POS] Creating invoice %.2f %s\n", activeNzd, currencyLabel.c_str());
+        MerchantInvoice created = api->createInvoice(activeNzd, saleDetails());
 
-        Serial.printf("[POS] Creating invoice $%.2f NZD\n", activeNzd);
-        activeInvoice = api->createInvoice(activeNzd, details);
-
-        if (!activeInvoice.ok) {
+        if (!created.ok) {
             state = State::ERROR;
             stateEnteredAt = millis();
-            ui.showError(activeInvoice.error);
+            ui.showError(created.error);
             break;
         }
 
-        invoiceCreatedAt = millis();
-        lastPollAt = 0;
+        setActiveInvoice(created);
+        saleStartedAt = millis();
         refreshCount = 0;
         boltcardSubmitted = false;
         state = State::AWAITING_PAYMENT;
 
-        ui.showQR(activeInvoice.paymentRequest,
-                  activeInvoice.satAmount,
-                  activeInvoice.nzdAmount > 0 ? activeInvoice.nzdAmount : activeNzd,
-                  INVOICE_EXPIRY_SEC,
-                  refreshCount);
+        showActiveQR();
 
-        Serial.printf("[POS] Invoice: $%.2f NZD = %lu sats\n",
-                      activeInvoice.nzdAmount, (unsigned long)activeInvoice.satAmount);
+        Serial.printf("[POS] Invoice: %.2f %s = %lu sats (expiry %ds)\n",
+                      activeInvoice.nzdAmount, currencyLabel.c_str(),
+                      (unsigned long)activeInvoice.satAmount, invoiceExpirySec);
         break;
     }
 
@@ -794,14 +952,29 @@ void loop() {
     case State::AWAITING_PAYMENT: {
         unsigned long now = millis();
         unsigned long elapsed = now - invoiceCreatedAt;
-        int secsLeft = INVOICE_EXPIRY_SEC - (int)(elapsed / 1000);
+        int secsLeft = invoiceExpirySec - (int)(elapsed / 1000);
+
+        // Hard cap on a sale's wall time, independent of the refresh cadence
+        // (self-custody invoices live minutes, not 60 s). Applies even after
+        // a Boltcard accepted the invoice: the LNURL-withdraw "OK" only means
+        // the wallet will *try* to pay, and the "Awaiting payment" screen
+        // has no Cancel button, so this is how a failed withdrawal ends.
+        if (now - saleStartedAt >= SALE_TIMEOUT_MS) {
+            state = State::ERROR;
+            stateEnteredAt = now;
+            ui.showError("Payment timeout");
+            break;
+        }
 
         // Auto-refresh before expiry. Suspended once a Boltcard has accepted
         // the invoice — the wallet is paying this exact bolt11, so we must not
         // swap it out from under the in-flight withdrawal.
         if (!boltcardSubmitted &&
-            elapsed >= (unsigned long)(INVOICE_EXPIRY_SEC * 1000 - INVOICE_REFRESH_BUFFER_MS)) {
-            if (refreshCount >= MAX_INVOICE_REFRESHES) {
+            elapsed >= (unsigned long)(invoiceExpirySec * 1000 - INVOICE_REFRESH_BUFFER_MS)) {
+            // Don't mint a replacement that the cap above would kill within
+            // 30 s anyway.
+            if (refreshCount >= MAX_INVOICE_REFRESHES ||
+                now - saleStartedAt + 30000UL >= SALE_TIMEOUT_MS) {
                 state = State::ERROR;
                 stateEnteredAt = millis();
                 ui.showError("Payment timeout");
@@ -817,23 +990,13 @@ void loop() {
             if (!refreshed.ok) {
                 Serial.printf("[POS] Refresh failed (%s) — creating new invoice\n",
                               refreshed.error.c_str());
-                String details = merchantName.length() > 0
-                    ? merchantName + " $" + String(activeNzd, 2) + " NZD"
-                    : "$" + String(activeNzd, 2) + " NZD";
-                refreshed = api->createInvoice(activeNzd, details);
+                refreshed = api->createInvoice(activeNzd, saleDetails());
             }
 
             if (refreshed.ok) {
-                activeInvoice = refreshed;
-                invoiceCreatedAt = millis();
+                setActiveInvoice(refreshed);
                 refreshCount++;
-                lastPollAt = 0;
-
-                ui.showQR(activeInvoice.paymentRequest,
-                          activeInvoice.satAmount,
-                          activeInvoice.nzdAmount > 0 ? activeInvoice.nzdAmount : activeNzd,
-                          INVOICE_EXPIRY_SEC,
-                          refreshCount);
+                showActiveQR();
             } else {
                 Serial.printf("[POS] Invoice creation failed too: %s\n",
                               refreshed.error.c_str());
@@ -857,10 +1020,18 @@ void loop() {
                 float nzd = ps.nzdAmount > 0 ? ps.nzdAmount : activeNzd;
                 uint64_t sats = ps.satAmount > 0 ? ps.satAmount : activeInvoice.satAmount;
                 ui.showPaid(sats, nzd, currencyLabel);
-                Serial.printf("[POS] PAID! %.2f %s (%lu sats)\n",
-                              nzd, currencyLabel.c_str(), (unsigned long)sats);
+                Serial.printf("[POS] PAID! %.2f %s (%lu sats) ref=%s\n",
+                              nzd, currencyLabel.c_str(), (unsigned long)sats,
+                              ps.reference.length() ? ps.reference.c_str()
+                                                    : activeInvoice.reference.c_str());
+                // The provider may report a different reference than the
+                // live one (self-custody: an earlier invoice of this sale
+                // settled after a refresh) — print the one that was paid.
                 printer.printReceipt(merchantName, "", currencyLabel, nzd, sats,
-                                     activeInvoice.reference, ps.paidDate);
+                                     ps.reference.length() ? ps.reference
+                                                           : activeInvoice.reference,
+                                     ps.paidDate,
+                                     api == &lnaddrApi ? lnaddrApi.payeeLabel() : String());
                 break;
             }
         }
@@ -888,10 +1059,7 @@ void loop() {
                         Serial.printf("[POS] Boltcard declined: %s\n", br.error.c_str());
                         ui.showError(br.error.length() ? br.error : "Card declined");
                         delay(1800);
-                        ui.showQR(activeInvoice.paymentRequest,
-                                  activeInvoice.satAmount,
-                                  activeInvoice.nzdAmount > 0 ? activeInvoice.nzdAmount : activeNzd,
-                                  INVOICE_EXPIRY_SEC, refreshCount);
+                        showActiveQR();
                     }
                 }
             }

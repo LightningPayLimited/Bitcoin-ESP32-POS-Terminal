@@ -2,6 +2,7 @@
 #include "config.h"
 #include "logo.h"
 #include "pos_fonts.h"
+#include "money_fmt.h"
 #include <Adafruit_Thermal.h>
 #include <Arduino_GFX_Library.h>
 #include <HardwareSerial.h>
@@ -25,6 +26,7 @@ struct ReceiptJob {
     String   currency;
     String   reference;
     String   paidDate;
+    String   payee;
     float    fiat;
     uint64_t sats;
 };
@@ -83,6 +85,7 @@ static void printText(const String& s,
     canvas.setFont(font);
     canvas.setTextColor(RGB565_WHITE);  // canvas: WHITE sets bit = black ink
     canvas.setTextSize(1);
+    canvas.setTextWrap(false);          // clip long lines; never wrap off-canvas
 
     int16_t x1, y1; uint16_t tw, th;
     canvas.getTextBounds(s, 0, 0, &x1, &y1, &tw, &th);
@@ -101,6 +104,18 @@ static void printText(const String& s,
 
     printBitmapRaster(W, canvasH, canvas.getFramebuffer());
     feedDots(6);  // small inter-line gap so adjacent rows don't touch
+}
+
+// Unwrapped pixel width of `s` in `font` (small probe canvas, freed on return).
+static uint16_t textWidth(const String& s, const GFXfont* font) {
+    Arduino_Canvas_Mono probe(LOGO_PRINT_W, 8, nullptr);
+    if (!probe.begin()) return 0;
+    probe.setFont(font);
+    probe.setTextSize(1);
+    probe.setTextWrap(false);
+    int16_t x1, y1; uint16_t w, h;
+    probe.getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
+    return w;
 }
 
 void Printer::begin() {
@@ -140,7 +155,11 @@ static void renderReceipt(const ReceiptJob& j) {
     feedDots(8);
 
     // ---- Header: merchant name + optional GST ----
-    printText(j.merchantName.length() ? j.merchantName : "LIGHTNING PAY",
+    // Self-custody with no store name reports the address as the merchant
+    // name; it's on the "Paid to" line already and too wide for 18 pt.
+    const bool nameIsPayee = j.payee.length() && j.merchantName == j.payee;
+    printText((j.merchantName.length() && !nameIsPayee) ? j.merchantName
+                                                        : "LIGHTNING PAY",
               &FreeSansBold18pt7b, 'C', 40);
     if (j.gstNumber.length()) {
         printText("GST: " + j.gstNumber, &FreeSans12pt7b, 'C', 28);
@@ -155,10 +174,11 @@ static void renderReceipt(const ReceiptJob& j) {
     // ---- Amounts (left-aligned) ----
     String cur = j.currency.length() ? j.currency : String("NZD");
     char buf[64];
-    snprintf(buf, sizeof(buf), "$%.2f %s", j.fiat, cur.c_str());
-    printText(buf, &FreeSansBold18pt7b, 'L', 40);
-    snprintf(buf, sizeof(buf), "%lu sats", (unsigned long)j.sats);
-    printText(buf, &FreeSans12pt7b, 'L', 28);
+    printText(formatAmount(j.fiat, j.sats, cur), &FreeSansBold18pt7b, 'L', 40);
+    if (cur != "SATS") {   // sats-denominated sale: no second line
+        snprintf(buf, sizeof(buf), "%lu sats", (unsigned long)j.sats);
+        printText(buf, &FreeSans12pt7b, 'L', 28);
+    }
     feedDots(12);
 
     // ---- Metadata ----
@@ -167,6 +187,39 @@ static void renderReceipt(const ReceiptJob& j) {
     }
     if (j.reference.length()) {
         printText("Ref:   " + j.reference, &FreeSans12pt7b, 'L', 28);
+    }
+    if (j.payee.length()) {
+        // 384 dots fit ~30 chars at 12 pt; longer addresses go on their
+        // own line(s): split at '@', then anything still too wide is
+        // broken at a '.', '-' or '/' (or by character) — never clipped.
+        const GFXfont* f = &FreeSans12pt7b;
+        auto emit = [&](String txt) {
+            while (txt.length()) {
+                String seg = txt;
+                while (textWidth(seg, f) > LOGO_PRINT_W && seg.length() > 1) {
+                    int cut = seg.lastIndexOf('.');
+                    cut = max(cut, seg.lastIndexOf('-'));
+                    cut = max(cut, seg.lastIndexOf('/'));
+                    seg = (cut > 0) ? seg.substring(0, cut + 1)
+                                    : seg.substring(0, seg.length() - 1);
+                }
+                printText(seg, f, 'L', 28);
+                txt = txt.substring(seg.length());
+            }
+        };
+        String line = "Paid to: " + j.payee;
+        int at = j.payee.indexOf('@');
+        if (textWidth(line, f) <= LOGO_PRINT_W) {
+            printText(line, f, 'L', 28);
+        } else {
+            printText("Paid to:", f, 'L', 28);
+            if (at > 0 && textWidth(j.payee, f) > LOGO_PRINT_W) {
+                emit(j.payee.substring(0, at + 1));   // user@
+                emit(j.payee.substring(at + 1));      // domain
+            } else {
+                emit(j.payee);
+            }
+        }
     }
     feedDots(16);
 
@@ -195,11 +248,13 @@ void Printer::printReceipt(const String& merchantName,
                            float         fiatAmount,
                            uint64_t      satAmount,
                            const String& reference,
-                           const String& paidDate) {
+                           const String& paidDate,
+                           const String& payee) {
     if (!_ready || !printQueue) return;
 
     ReceiptJob* job = new ReceiptJob{merchantName, gstNumber, currency,
-                                     reference, paidDate, fiatAmount, satAmount};
+                                     reference, paidDate, payee,
+                                     fiatAmount, satAmount};
     // Non-blocking enqueue — never stall the caller (the UI loop).
     if (xQueueSend(printQueue, &job, 0) != pdTRUE) {
         Serial.println("[PRINTER] queue full — dropping receipt");

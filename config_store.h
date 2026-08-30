@@ -4,11 +4,12 @@
 // ============================================================
 // Config Store — NVS-backed persistent configuration
 // Stores: WiFi creds + payment-provider settings.
-//   - Stacked: API key (server URL is compiled in)
-//   - BTCPay : server URL, Greenfield API key, store ID, currency
+//   - Stacked  : API key (server URL is compiled in)
+//   - BTCPay   : server URL, Greenfield API key, store ID, currency
+//   - LnAddress: Lightning Address (self-custody), currency, store name
 // ============================================================
 
-enum class Provider { STACKED, BTCPAY };
+enum class Provider { STACKED, BTCPAY, LNADDRESS };
 
 class ConfigStore {
 public:
@@ -28,8 +29,19 @@ public:
                     const String& serverUrl, const String& apiKey,
                     const String& storeId, const String& currency);
 
+    /// Save self-custody config (WiFi + Lightning Address/currency/optional
+    /// store name) and mark provisioned. No API key involved.
+    bool saveLnAddress(const String& ssid, const String& pass,
+                       const String& lnAddress, const String& currency,
+                       const String& storeName);
+
     /// Persist the store ID chosen after reboot (BTCPay store selection).
     bool saveStoreId(const String& storeId);
+
+    /// Remember that the Lightning Address passed the LUD-21 verify probe
+    /// so later boots skip it (and don't mint a probe invoice each time).
+    bool saveLnVerified();
+    bool lnVerified() const { return _lnVerified; }
 
     /// Clear all config (factory reset)
     bool clear();
@@ -46,6 +58,11 @@ public:
     String   btcpayUrl() const { return _btcpayUrl; }
     String   storeId()   const { return _storeId; }
     String   currency()  const { return _currency; }
+    String   lnAddress() const { return _lnAddress; }
+    String   storeName() const { return _storeName; }
+
+    /// NVS string for a provider ("stacked" | "btcpay" | "lnaddress").
+    static const char* providerName(Provider p);
 
 private:
     bool   _provisioned = false;
@@ -56,4 +73,7 @@ private:
     String _btcpayUrl;
     String _storeId;
     String _currency;
+    String _lnAddress;
+    String _storeName;
+    bool   _lnVerified = false;
 };

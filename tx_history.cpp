@@ -46,6 +46,13 @@ static String isoUtc(time_t t) {
 HistoryData buildHistory(PaymentProvider& api) {
     HistoryData d = {};
 
+    // Providers without a history endpoint: say so before anything else
+    // (the clock check below would otherwise mask it right after boot).
+    if (!api.supportsHistory()) {
+        d.error = "Transaction history not supported";
+        return d;
+    }
+
     d.now = time(nullptr);
     if (d.now < CLOCK_SET_THRESHOLD) {
         d.error = "Clock not set";

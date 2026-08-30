@@ -33,6 +33,7 @@ public:
     MerchantProfile getProfile() override;
 
     /// GET /api/merchant/transactions — one page of history.
+    bool supportsHistory() const override { return true; }
     TxPage getTransactions(const String& fromIso, const String& toIso,
                            int limit, int offset) override;
 

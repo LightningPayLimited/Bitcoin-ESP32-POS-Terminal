@@ -28,10 +28,19 @@ public:
     void showSetupInfo();
     void showAmountEntry(const String& amount, const String& currency);
     void showLoading(const String& message);
-    void showQR(const String& bolt11, uint64_t sats, float nzd, int secsLeft, int refreshCount);
+    /// `currency` labels the fiat line; "SATS" suppresses it (the sats
+    /// figure under the QR already says everything).
+    void showQR(const String& bolt11, uint64_t sats, float nzd, int secsLeft, int refreshCount,
+                const String& currency = "NZD");
     void showPaid(uint64_t sats, float nzd, const String& currency = "NZD");
     void showError(const String& message);
     void showWifiError(const String& ssid);
+
+    /// Boot-time failure that needs the merchant (bad Lightning Address,
+    /// wallet without LUD-21…). Shows what was configured, why it failed,
+    /// and the two ways out: tap to re-enter setup, hold BOOT to reset.
+    void showBootError(const String& title, const String& subject,
+                       const String& reason, bool retrying);
 
     /// Transaction history: timeframe tabs + a scrollable list of individual
     /// transactions for the selected period, with a count + paid total.
@@ -104,5 +113,8 @@ private:
     void drawButton(int x, int y, int w, int h, const char* label, uint16_t bg, uint16_t fg, int textSize);
     void drawCenteredText(const String& s, int cx, int cy, int size, uint16_t fg, uint16_t bg);
     Key  hitTest(int tx, int ty);
-    void drawQRCode(const String& data, int x, int y, int areaSize);
+    /// Renders `data` as a QR (alphanumeric mode expects uppercase input),
+    /// picking the smallest version from QR_VERSION..QR_MAX_VERSION that
+    /// fits. Returns false (and paints a notice) if it can't fit at all.
+    bool drawQRCode(const String& data, int x, int y, int areaSize);
 };

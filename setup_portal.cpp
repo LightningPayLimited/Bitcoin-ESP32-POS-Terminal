@@ -76,6 +76,7 @@ static const char SETUP_HTML[] PROGMEM = R"rawhtml(
     <select name="provider" id="provider">
       <option value="stacked" selected>Stacked</option>
       <option value="btcpay">BTCPayServer</option>
+      <option value="lnaddress">Self-custody (Lightning Address)</option>
     </select>
 
     <label>WiFi Network</label>
@@ -116,6 +117,27 @@ static const char SETUP_HTML[] PROGMEM = R"rawhtml(
       <p class="hint">You'll pick the store on this device after it restarts</p>
     </div>
 
+    <div id="lnaddrFields" class="hidden">
+      <label>Lightning Address</label>
+      <input name="lnAddress" id="lnAddress" placeholder="you@walletprovider.com"
+             inputmode="email" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <p class="hint">Payments go straight to your wallet. The wallet must support
+        LNURL-pay verify (LUD-21) &mdash; e.g. Alby, Coinos, Stacked, LNbits.</p>
+      <label>Currency</label>
+      <select name="lnCurrency" id="lnCurrency">
+        <option value="NZD" selected>NZD</option>
+        <option value="AUD">AUD</option>
+        <option value="USD">USD</option>
+        <option value="EUR">EUR</option>
+        <option value="GBP">GBP</option>
+        <option value="CAD">CAD</option>
+        <option value="JPY">JPY</option>
+        <option value="SATS">SATS (no conversion)</option>
+      </select>
+      <label>Store name <span style="color:#666">(optional)</span></label>
+      <input name="storeName" id="storeName" placeholder="Shown on receipts">
+    </div>
+
     <button type="submit">Save &amp; Connect</button>
   </form>
 </div>
@@ -128,11 +150,21 @@ const rescan = document.getElementById('rescan');
 const provider = document.getElementById('provider');
 const stackedFields = document.getElementById('stackedFields');
 const btcpayFields = document.getElementById('btcpayFields');
+const lnaddrFields = document.getElementById('lnaddrFields');
 
 function updateProvider() {
-  const bp = provider.value === 'btcpay';
-  stackedFields.classList.toggle('hidden', bp);
-  btcpayFields.classList.toggle('hidden', !bp);
+  const p = provider.value;
+  stackedFields.classList.toggle('hidden', p !== 'stacked');
+  btcpayFields.classList.toggle('hidden', p !== 'btcpay');
+  lnaddrFields.classList.toggle('hidden', p !== 'lnaddress');
+}
+
+// user@domain, https://…, lnurlp://…, or a bech32 lnurl1… string
+function looksLikeLnAddress(v) {
+  v = v.replace(/^lightning:/i, '');
+  return /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?$/i.test(v) ||
+         /^(https:\/\/|lnurlp:\/\/)\S+$/i.test(v) ||
+         /^lnurl1[a-z0-9]+$/i.test(v);
 }
 provider.addEventListener('change', updateProvider);
 updateProvider();
@@ -149,17 +181,59 @@ function scan() {
       const bars = n.rssi > -55 ? '\u25CF\u25CF\u25CF' : n.rssi > -70 ? '\u25CF\u25CF\u25CB' : '\u25CF\u25CB\u25CB';
       return '<option value="' + n.ssid.replace(/"/g,'&quot;') + '">' + n.ssid + lock + ' ' + bars + '</option>';
     }).join('');
+    applySsidPrefill();
   }).catch(() => {
     sel.innerHTML = '<option value="">Scan failed</option>';
   });
 }
 
+function setManual(on) {
+  manual.classList.toggle('hidden', !on);
+  sel.disabled = on;
+  toggle.textContent = on ? '← Pick from list' : 'Enter SSID manually →';
+}
 toggle.addEventListener('click', () => {
-  const manualOn = manual.classList.toggle('hidden') === false;
-  sel.disabled = manualOn;
-  toggle.textContent = manualOn ? '← Pick from list' : 'Enter SSID manually →';
+  const manualOn = manual.classList.contains('hidden');
+  setManual(manualOn);
   if (manualOn) manual.focus();
 });
+
+// Re-entering setup (tap on a boot error, or a failed WiFi/wallet check):
+// the device hands back what it had — everything except passwords/keys —
+// so only the wrong field needs retyping.
+let prefillSsid = '';
+function applySsidPrefill() {
+  if (!prefillSsid) return;
+  // Never overwrite something the merchant typed themselves.
+  const typed = manual.value && manual.value !== prefillSsid;
+  if ([...sel.options].some(o => o.value === prefillSsid)) {
+    sel.value = prefillSsid;
+    if (!typed) { manual.value = ''; setManual(false); }   // it's in the list after all
+  } else if (!typed) {
+    manual.value = prefillSsid;
+    setManual(true);
+  }
+  // Once applied against a real scan list (placeholders have value ""),
+  // later rescans leave the SSID controls alone.
+  if (sel.options.length && sel.options[0].value) prefillSsid = '';
+}
+fetch('/api/prefill').then(r => r.json()).then(c => {
+  if (c.provider) { provider.value = c.provider; updateProvider(); }
+  if (c.lnAddress) document.getElementById('lnAddress').value = c.lnAddress;
+  if (c.storeName) document.getElementById('storeName').value = c.storeName;
+  if (c.btcpayUrl) document.getElementById('btcpayUrl').value = c.btcpayUrl;
+  if (c.currency) {
+    // A code saved via serial/JSON may not be in the list — add it so the
+    // re-save doesn't silently fall back to NZD.
+    for (const id of ['lnCurrency', 'currency']) {
+      const s = document.getElementById(id);
+      if (![...s.options].some(o => o.value === c.currency)) s.add(new Option(c.currency, c.currency));
+      s.value = c.currency;
+    }
+  }
+  prefillSsid = c.ssid || '';
+  applySsidPrefill();
+}).catch(() => {});
 
 rescan.addEventListener('click', scan);
 
@@ -174,6 +248,12 @@ document.getElementById('f').addEventListener('submit', e => {
         !document.getElementById('btcpayKey').value) {
       e.preventDefault();
       alert('BTCPay needs a server URL and API key');
+    }
+  } else if (provider.value === 'lnaddress') {
+    const a = document.getElementById('lnAddress').value.trim();
+    if (!looksLikeLnAddress(a)) {
+      e.preventDefault();
+      alert('Enter a Lightning Address like you@walletprovider.com');
     }
   } else if (!document.getElementById('apiKey').value) {
     e.preventDefault();
@@ -209,6 +289,47 @@ static const char SETUP_OK_HTML[] PROGMEM = R"rawhtml(
 </body>
 </html>
 )rawhtml";
+
+// ================================================================
+// Lightning Address sanity check (syntax only — the device is in AP mode
+// during setup, so the address is resolved for real at the next boot).
+// Accepts user@domain (LUD-16), https:// or lnurlp:// URLs (LUD-17) and
+// bech32 lnurl1… strings (LUD-01).
+// ================================================================
+static bool looksLikeLnAddress(const String& in) {
+    String a = in;
+    a.trim();
+    if (a.isEmpty() || a.indexOf(' ') >= 0) return false;
+    String l = a;
+    l.toLowerCase();
+    // Pasted-from-wallet "lightning:" URI prefix — LnAddressAPI::begin()
+    // strips it too, so accept it on every form (matches the portal JS).
+    if (l.startsWith("lightning:")) {
+        a = a.substring(10); l = l.substring(10);
+        a.trim(); l.trim();
+        if (a.isEmpty()) return false;
+    }
+    if (l.startsWith("https://") || l.startsWith("lnurlp://")) return a.length() > 10;
+    if (l.startsWith("lnurl1")) return a.length() > 10;
+    // user@domain — same charset the provider enforces (LUD-16), so a
+    // value accepted here can't fail the local check after reboot.
+    int at = l.indexOf('@');
+    if (at <= 0 || at == (int)l.length() - 1) return false;
+    if (l.indexOf('@', at + 1) >= 0) return false;
+    for (int i = 0; i < at; i++) {
+        char c = l[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+              c == '-' || c == '_' || c == '.' || c == '+')) return false;
+    }
+    String dom = l.substring(at + 1);
+    for (size_t i = 0; i < dom.length(); i++) {
+        char c = dom[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+              c == '-' || c == '.' || c == ':')) return false;
+    }
+    int dot = dom.indexOf('.');
+    return dot > 0 && dot < (int)dom.length() - 1;
+}
 
 // ================================================================
 // Captive Portal
@@ -311,6 +432,18 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
             }
             // Store ID is resolved on-device after reboot.
             store.saveBTCPay(ssid, pass, url, key, "", cur);
+        } else if (provider == "lnaddress") {
+            String addr = server.arg("lnAddress");
+            addr.trim();
+            String cur  = server.arg("lnCurrency");
+            String name = server.arg("storeName");
+            name.trim();
+            if (!looksLikeLnAddress(addr)) {
+                server.send(400, "text/plain",
+                            "A Lightning Address (you@walletprovider.com) is required");
+                return;
+            }
+            store.saveLnAddress(ssid, pass, addr, cur, name);
         } else {
             String apiKey = server.arg("apiKey");
             if (apiKey.isEmpty()) {
@@ -352,6 +485,18 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
                 return;
             }
             store.saveBTCPay(ssid, pass, url, key, stId, cur);
+        } else if (provider == "lnaddress") {
+            String addr = doc["lnAddress"] | "";
+            addr.trim();
+            String cur  = doc["currency"] | "";
+            String name = doc["storeName"] | "";
+            name.trim();
+            if (!looksLikeLnAddress(addr)) {
+                server.send(400, "application/json",
+                            "{\"error\":\"valid lnAddress required\"}");
+                return;
+            }
+            store.saveLnAddress(ssid, pass, addr, cur, name);
         } else {
             String apiKey = doc["apiKey"] | "";
             if (apiKey.isEmpty()) {
@@ -363,6 +508,22 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
 
         server.send(200, "application/json", "{\"ok\":true}");
         saved = true;
+    });
+
+    // Saved, non-secret settings for the form to pre-fill after a
+    // "re-enter setup" (passwords / API keys are never served — the setup
+    // AP is open).
+    server.on("/api/prefill", HTTP_GET, [&server, &store]() {
+        JsonDocument doc;
+        doc["ssid"]      = store.ssid();
+        doc["provider"]  = ConfigStore::providerName(store.provider());
+        doc["currency"]  = store.currency();
+        doc["btcpayUrl"] = store.btcpayUrl();
+        doc["lnAddress"] = store.lnAddress();
+        doc["storeName"] = store.storeName();
+        String out;
+        serializeJson(doc, out);
+        server.send(200, "application/json", out);
     });
 
     // Firmware update portal — also reachable during setup at
@@ -426,9 +587,12 @@ void SetupPortal::runCaptivePortal(ConfigStore& store) {
 // ================================================================
 // Serial config receiver
 // Accepts JSON on serial:
-//   Stacked: {"ssid":"...","pass":"...","apiKey":"..."}
-//   BTCPay : {"ssid":"...","pass":"...","provider":"btcpay",
-//             "btcpayUrl":"...","apiKey":"...","currency":"..."}
+//   Stacked  : {"ssid":"...","pass":"...","apiKey":"..."}
+//   BTCPay   : {"ssid":"...","pass":"...","provider":"btcpay",
+//               "btcpayUrl":"...","apiKey":"...","currency":"..."}
+//   LnAddress: {"ssid":"...","pass":"...","provider":"lnaddress",
+//               "lnAddress":"you@wallet.com","currency":"NZD",
+//               "storeName":"..."}
 // Also accepts "RESET" (factory reset) and "SCAN" (list WiFi
 // networks — replies with SCAN_RESULT:[{ssid,rssi,auth},...])
 // ================================================================
@@ -533,6 +697,17 @@ bool SetupPortal::checkSerial(ConfigStore& store) {
             return false;
         }
         store.saveBTCPay(ssid, pass, url, key, stId, cur);
+    } else if (provider == "lnaddress") {
+        String addr = doc["lnAddress"] | "";
+        addr.trim();
+        String cur  = doc["currency"] | "";
+        String name = doc["storeName"] | "";
+        name.trim();
+        if (!looksLikeLnAddress(addr)) {
+            Serial.println("[SERIAL] Need a valid lnAddress (you@wallet.com)");
+            return false;
+        }
+        store.saveLnAddress(ssid, pass, addr, cur, name);
     } else {
         String apiKey = doc["apiKey"] | "";
         if (apiKey.isEmpty()) {

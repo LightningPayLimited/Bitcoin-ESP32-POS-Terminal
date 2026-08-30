@@ -2,9 +2,10 @@
 
 A hardware POS terminal that accepts Lightning Bitcoin payments — by QR code or
 Boltcard tap-to-pay — and prints receipts. Backends: the
-[Stacked](https://stackedbitcoin.com) merchant API or any
-[BTCPay Server](https://btcpayserver.org) (Greenfield API). Runs on the Guition
-JC4880P443, an ESP32-P4 board with a built-in 4.3" MIPI-DSI touchscreen.
+[Stacked](https://stackedbitcoin.com) merchant API, any
+[BTCPay Server](https://btcpayserver.org) (Greenfield API), or **self-custody**
+— your own wallet's Lightning Address, with no intermediary at all. Runs on the
+Guition JC4880P443, an ESP32-P4 board with a built-in 4.3" MIPI-DSI touchscreen.
 
 ## Architecture
 
@@ -28,16 +29,17 @@ JC4880P443, an ESP32-P4 board with a built-in 4.3" MIPI-DSI touchscreen.
 └──────────────────────────────────────────────────────────────────┘
                  │ HTTPS
                  ▼
-   ┌────────────────────────────┐     ┌────────────────────────────┐
-   │ app.stackedbitcoin.com     │ or  │ Your BTCPay Server         │
-   │ /api/merchant/payment      │     │ Greenfield API             │
-   │ /api/merchant/transactions │     │ /api/v1/stores/.../invoices│
-   └────────────────────────────┘     └────────────────────────────┘
+   ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────────────┐
+   │ app.stackedbitcoin   │  │ Your BTCPay Server   │  │ Your wallet's Lightning  │
+   │ /api/merchant/…      │or│ Greenfield API       │or│ Address (LNURL-pay)      │
+   │ payment/transactions │  │ /api/v1/stores/…     │  │ .well-known/lnurlp/<you> │
+   └──────────────────────┘  └──────────────────────┘  │ callback → verify (LUD-21)│
+                                                       └──────────────────────────┘
 ```
 
 The POS state machine talks to a common `PaymentProvider` interface
-(`payment_provider.h`); the concrete backend — `StackedAPI` or `BTCPayAPI` — is
-selected at boot from the provisioned config.
+(`payment_provider.h`); the concrete backend — `StackedAPI`, `BTCPayAPI` or
+`LnAddressAPI` — is selected at boot from the provisioned config.
 
 ## Provisioning (Getting Credentials onto the Device)
 
@@ -53,6 +55,11 @@ No camera needed. Three options:
    - **BTCPayServer**: enter WiFi, server URL, and a Greenfield API key
      (needs `btcpay.store.cancreateinvoice` + `btcpay.store.canviewinvoices`);
      after reboot the device lists your stores on screen — tap one to select it
+   - **Self-custody (Lightning Address)**: enter WiFi, your Lightning Address
+     (`you@walletprovider.com`), the currency to price in (or `SATS`), and an
+     optional store name for the splash screen and receipts. No API key. See
+     [Self-custody mode](#self-custody-mode-lightning-address) for which
+     wallets work.
 5. Device saves config to NVS and reboots into POS mode
 
 ### Option B: Web Serial (hosted setup page)
@@ -67,6 +74,13 @@ Send a JSON line over serial (115200 baud):
 ```json
 {"ssid":"MyWiFi","pass":"MyPassword","apiKey":"abc123..."}
 ```
+BTCPay and self-custody use the same channel with a `provider` field:
+```json
+{"ssid":"MyWiFi","pass":"MyPassword","provider":"btcpay","btcpayUrl":"https://btcpay.example.com","apiKey":"...","currency":"NZD"}
+{"ssid":"MyWiFi","pass":"MyPassword","provider":"lnaddress","lnAddress":"you@walletprovider.com","currency":"NZD","storeName":"My Cafe"}
+```
+(`storeName` is optional; `currency` defaults to NZD. The same JSON works on
+`POST http://192.168.4.1/api/config` in setup mode.)
 
 ### Factory Reset
 Send `RESET` over serial, or hold the BOOT button (GPIO 35) for 5 seconds.
@@ -95,11 +109,16 @@ SSID pre-filled so you can fix it.
 ```
 
 - Amount is entered in the configured fiat currency (NZD for Stacked; whatever
-  you chose for BTCPay) — the backend handles fiat→sats conversion
+  you chose for BTCPay / self-custody) — Stacked and BTCPay convert fiat→sats
+  server-side; self-custody uses the public spot rate (see below). Choosing
+  `SATS` as the currency enters sats directly with no conversion.
 - Invoices expire in **60 seconds** — auto-refreshed (up to 10x = ~10 min);
-  BTCPay can't refresh in place, so a fresh invoice is created instead
-- Payment is confirmed by polling every 3 s; PAID screen shows for 5 s and a
-  receipt prints automatically (if a printer is connected)
+  BTCPay can't refresh in place, so a fresh invoice is created instead.
+  Self-custody keeps each wallet invoice up for **5 minutes** (rate locked,
+  like a BTCPay checkout) before requesting a fresh one; every sale still
+  times out at 10 minutes of wall time (`SALE_TIMEOUT_MS`)
+- Payment is confirmed by polling every 3 s; PAID screen shows until tapped and
+  a receipt prints automatically (if a printer is connected)
 
 ### NFC tap-to-pay (Boltcard)
 
@@ -112,9 +131,70 @@ LNURLW callback — settlement is then detected by the normal payment poll.
 The menu button on the numpad opens a takings screen: timeframe tabs
 (24h / week / month / last month, computed in NZ local time), a scrollable
 list of transactions with count and paid total, and a per-row **Check**
-button that re-queries the invoice's live status. (Stacked only — BTCPay
-shows a "not supported" notice.) The top-right **Update** button opens the
-firmware update menu (see Firmware Updates below).
+button that re-queries the invoice's live status. (Stacked only — BTCPay and
+self-custody show a "not supported" notice.) The top-right **Update** button
+opens the firmware update menu (see Firmware Updates below).
+
+## Self-custody mode (Lightning Address)
+
+Pick **Self-custody** at setup and the POS talks straight to the wallet
+behind your Lightning Address — no merchant account, no API key, funds land
+in your wallet. Under the hood it is a plain LNURL-pay client:
+
+```
+first  GET https://<domain>/.well-known/lnurlp/<you>          (LUD-16 → LUD-06)
+boot   → { callback, minSendable, maxSendable, commentAllowed, metadata }
+       GET callback?amount=<1 sat>  — probe: must return `verify` (LUD-21)
+
+sale   spot rate (Coinbase, else CoinGecko)  →  fiat → sats
+       GET callback?amount=<msat>&comment=<store $12.50 NZD>
+       → { pr: "lnbc…", verify: "https://…" }
+       show QR (bolt11)  ─┐
+       GET verify every 3 s ─┘  → { settled: true, preimage } → PAID + receipt
+```
+
+**Your wallet must support LUD-21 (`verify`).** Without it the POS has no way
+to learn that an invoice was paid. Known to return `verify`: **Alby**,
+**Coinos**, **Stacked**, **LNbits**. **Wallet of Satoshi does not.** The POS
+checks this once, on the first boot after setup, by requesting one 1-sat
+invoice that is never paid (some wallets list it as pending until it
+expires); the result is remembered so later boots skip the probe. If the
+check fails you get a screen naming the address and the reason — tap it to
+go back to the setup portal, which comes back pre-filled with everything
+except the WiFi password, so you only fix the address or pick another
+wallet; holding BOOT 5 s still factory-resets. A corrected config sent over
+USB serial while that screen is up also takes effect (the device reboots).
+
+What the POS verifies before showing a QR: the LNURL endpoint, callback and
+verify URLs are all HTTPS with certificates validated against the Mozilla
+root-CA bundle built into the firmware (an on-path attacker could otherwise
+swap the invoice for their own; redirects are followed but never to plain
+http); the bolt11 parses and is a mainnet (`lnbc`) invoice; its amount
+equals the requested amount (LUD-06 rule). A payment counts only when
+`verify` reports `settled` **with** a preimage that hashes to the invoice's
+payment hash, and any `pr` it echoes matches the invoice on screen.
+
+Other details:
+- Rate: `RATE_URL_PRIMARY` / `RATE_URL_FALLBACK` in `config.h` (Coinbase spot,
+  CoinGecko). A tick more than 25 % away from a rate seen in the last 15 min
+  is distrusted and the other source consulted; if nothing sane is
+  available the recent rate is reused, else the sale errors. The rate is
+  fetched at boot and at each invoice, and locked for the invoice's
+  5-minute life (`LNADDR_INVOICE_EXPIRY_SEC`).
+- The sale description (store name + amount) is sent as the LNURL `comment`
+  when the wallet allows it, so each sale is labelled in your wallet history.
+- If a customer pays the previous QR right as the POS swaps to a fresh one,
+  it is still caught: the POS keeps polling that sale's earlier invoices.
+  If the wallet can't be reached at swap time, the current (still valid)
+  invoice simply stays on screen.
+- Receipts carry the paid invoice's payment-hash prefix as **Ref** and a
+  **Paid to:** line with the address, so a wrong destination is noticed.
+- Currency `SATS` turns the numpad into a whole-sats keypad (no decimal
+  point). Non-dollar currencies print without a symbol (`10.00 EUR`) — the
+  fonts are ASCII-only.
+- Boltcard tap-to-pay works as with the other providers (and the card
+  server's certificate is now validated against the same CA bundle).
+- No transaction-history screen (there is no server to ask) — use your wallet.
 
 ## Hardware Setup
 
@@ -219,9 +299,14 @@ re-upload the `firmware/` folder.
   the other slot — don't flash the app image with plain esptool without
   doing the same.
 - The on-device updater fetches over TLS with `setInsecure()` (no CA
-  pinning, same trade-off as `boltcard.cpp`); the manifest md5 check catches
-  corruption but not a determined MITM. Pin your hosting CA in
-  `fw_portal.cpp` (`fetchManifest` / `installFromUrl`) if that matters.
+  pinning); the manifest md5 check catches corruption but not a determined
+  MITM. Pin your hosting CA in `fw_portal.cpp` (`fetchManifest` /
+  `installFromUrl`) — or switch it to `useRootCaBundle()` from
+  `tls_bundle.h` if the site has a publicly trusted cert — if that matters.
+- TLS certificate *validity dates* are not checked on this core
+  (`CONFIG_MBEDTLS_HAVE_TIME_DATE` is off), so the bundle and the Stacked
+  pin both work even before the clock syncs; an expired-but-otherwise-valid
+  cert is accepted.
 - The `/update` portals on the device are **unauthenticated** — same
   LAN-trust model as the setup portal.
 
@@ -241,6 +326,10 @@ ESP32-POS/
 ├── payment_provider.h     # Common backend interface
 ├── stacked_api.{h,cpp}    # Stacked merchant API client
 ├── btcpay_api.{h,cpp}     # BTCPay Server Greenfield client
+├── lnaddress_api.{h,cpp}  # Self-custody: Lightning Address / LNURL-pay + LUD-21
+├── bolt11.{h,cpp}         # BOLT11 + LNURL bech32 decoding (host-testable)
+├── fiat_rate.{h,cpp}      # BTC spot rate (Coinbase / CoinGecko) for self-custody
+├── tls_bundle.{h,cpp}     # Root-CA bundle for arbitrary public HTTPS hosts
 ├── tx_history.{h,cpp}     # Transaction history fetch + timeframe filtering
 ├── nfc.{h,cpp}            # PN532 card polling + NDEF URL read
 ├── boltcard.{h,cpp}       # LNURL-withdraw client (Boltcard payments)
@@ -279,6 +368,20 @@ TLS is pinned to the Stacked root CA (`stacked_ca.h`).
 Certificates are not pinned for BTCPay (`setInsecure`) so self-hosted servers
 with arbitrary certs — or plain-HTTP LAN instances — work.
 
+### Self-custody (LNURL-pay, no auth)
+
+| Request | Purpose |
+|---------|---------|
+| `GET https://<domain>/.well-known/lnurlp/<user>` | Resolve the address (LUD-16/06): callback, min/max, `commentAllowed` |
+| `GET <callback>?amount=<msat>[&comment=…]` | Create invoice → `pr` + `verify` (LUD-21) |
+| `GET <verify>` | Poll settlement → `settled`, `preimage` |
+| `GET api.coinbase.com/v2/prices/BTC-<CUR>/spot` | Spot rate (primary) |
+| `GET api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=<cur>` | Spot rate (fallback) |
+
+All of these are validated against the built-in root-CA bundle
+(`tls_bundle.h`). `https://…`, `lnurlp://…` and bech32 `lnurl1…` are accepted
+in place of `user@domain`.
+
 ## TODO
 
 - [x] Pin Stacked TLS root CA
@@ -289,6 +392,7 @@ with arbitrary certs — or plain-HTTP LAN instances — work.
 - [x] Screensaver + splash branding
 - [x] Cancel button on the invoice screen
 - [x] Landscape UI
+- [x] Self-custody mode (Lightning Address + LUD-21 verify)
 - [ ] Sound via onboard ES8311 codec (cha-ching!)
 - [ ] ESP Web Tools flash button
 - [ ] Settings screen (WiFi reconfigure without factory reset)

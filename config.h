@@ -39,16 +39,45 @@
 // Default invoice currency for BTCPay when none is supplied.
 #define BTCPAY_DEFAULT_CURRENCY "NZD"
 
+// --- Self-custody: Lightning Address / LNURL-pay (LUD-06/16/21) ---
+// The POS requests invoices straight from the merchant's own wallet via
+// its Lightning Address and confirms settlement by polling the LUD-21
+// `verify` URL. No API key, no intermediary.
+#define NVS_KEY_LN_ADDR   "ln_addr"      // user@domain, https://…, or lnurl1…
+#define NVS_KEY_LN_NAME   "ln_name"      // optional store name (splash/receipt)
+#define NVS_KEY_LN_OK     "ln_ok"        // "1" once the wallet passed the LUD-21 probe
+#define LNADDR_DEFAULT_CURRENCY "NZD"    // "SATS" = enter sats directly
+// Wallet-issued invoices usually live for hours, so the QR is kept up for
+// this long (rate locked meanwhile — BTCPay's default is 15 min) before a
+// fresh, re-rated one is requested. Fewer unpaid invoices in the wallet,
+// fewer QR swaps under a scanning customer. Capped by SALE_TIMEOUT_MS.
+#define LNADDR_INVOICE_EXPIRY_SEC 300
+#define LNADDR_BOLT11_PREFIX      "lnbc" // mainnet only
+// Fiat->BTC spot rate sources for self-custody mode (no API key). %s is the
+// ISO currency code; primary first, fallback on failure, then a cached
+// value younger than RATE_STALE_MAX_MS.
+#define RATE_URL_PRIMARY  "https://api.coinbase.com/v2/prices/BTC-%s/spot"
+#define RATE_URL_FALLBACK "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=%s"
+#define RATE_STALE_MAX_MS (15UL * 60UL * 1000UL)
+// HTTP timeouts: resolve / callback (invoice creation) vs the 3-second
+// settlement poll, which runs inside loop() and must not stall the UI.
+#define LNURL_HTTP_TIMEOUT_MS  15000
+#define LNADDR_POLL_TIMEOUT_MS 8000
+
 // --- Setup mode AP ---
 #define SETUP_AP_SSID   "LP-POS-Setup"
 #define SETUP_AP_PASS   ""
 #define SETUP_AP_IP     "192.168.4.1"
 
 // --- Invoice timing ---
-#define INVOICE_EXPIRY_SEC        60
+#define INVOICE_EXPIRY_SEC        60      // default countdown (Stacked/BTCPay)
 #define INVOICE_REFRESH_BUFFER_MS 5000
 #define PAYMENT_POLL_INTERVAL_MS  3000
 #define MAX_INVOICE_REFRESHES     10
+// A sale ends with "Payment timeout" after this many refreshes OR this
+// much wall time, whichever comes first — so providers whose invoices
+// live longer than 60 s (self-custody) still time out at ~10 minutes.
+#define SALE_TIMEOUT_MS           (MAX_INVOICE_REFRESHES * INVOICE_EXPIRY_SEC * 1000UL)
 
 // --- Display: built-in MIPI-DSI panel, 480x800 portrait ---
 // Panel driver IC is likely JD9365 (common 480x800 DSI panel).
@@ -89,9 +118,14 @@
 #define SCREENSAVER_TIMEOUT_MS  60000
 
 // --- QR ---
-// Bolt11 Lightning invoices are ~300-600 chars alphanumeric.
-// QR version 15 at ECC L holds up to 520 alphanumeric chars.
+// Bolt11 Lightning invoices are ~250-600 chars (uppercased -> alphanumeric
+// mode). QR version 15 at ECC L holds 758 alphanumeric chars; the renderer
+// starts there and steps up to QR_MAX_VERSION when an invoice (e.g. one
+// with many route hints) needs more room. v20 = 97 modules = 4 px/module
+// in the 440 px QR area — still scannable.
 #define QR_VERSION     15
+#define QR_MAX_VERSION 20
+#define QR_MAX_CHARS   1249   // alphanumeric capacity of QR_MAX_VERSION @ ECC L
 #define QR_ECC_LEVEL   0
 
 // --- Timers ---
