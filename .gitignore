@@ -9,3 +9,4 @@ compile_commands.json
 
 # Versioned build copies (fw_version.py) — publish these to the update site
 firmware/
+dist/
