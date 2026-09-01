@@ -142,7 +142,7 @@ void DisplayUI::calibrateTouch() {
                              3, COL_ACCENT, COL_BG);
             drawCenteredText(labels[step], SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 40,
                              2, COL_FG, COL_BG);
-            drawCenteredText("(tap the orange target)",
+            drawCenteredText("(tap the teal target)",
                              SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 20,
                              1, COL_DIM, COL_BG);
 
@@ -228,7 +228,7 @@ void DisplayUI::drawHeader(const String& text) {
     drawCenteredText(text, SCREEN_WIDTH / 2, HDR_H / 2, 3, COL_BG, COL_HEADER_BG);
 }
 
-// Hamburger menu button drawn over the right end of the orange header.
+// Hamburger menu button drawn over the right end of the teal header.
 void DisplayUI::drawMenuButton() {
     _gfx->fillRoundRect(MENU_X, MENU_Y, MENU_W, MENU_H, 7, COL_BG);
     int barW = MENU_W - 22;
@@ -258,7 +258,7 @@ void DisplayUI::showSplash(const String& merchantName) {
     _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ACCENT);
     _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ACCENT);
 
-    // Lightning Pay wordmark (white text + gold bolt) centred on black.
+    // Stacked logo centred on black.
     int logoX = (SCREEN_WIDTH - LOGO_W) / 2;
     int logoY = 310;
     _gfx->draw16bitRGBBitmap(logoX, logoY, LOGO_RGB565, LOGO_W, LOGO_H);
@@ -277,7 +277,7 @@ void DisplayUI::showSetupInfo() {
     _gfx->fillRect(0, 0, SCREEN_WIDTH, 5, COL_ACCENT);
     _gfx->fillRect(0, SCREEN_HEIGHT - 5, SCREEN_WIDTH, 5, COL_ACCENT);
 
-    // Lightning Pay wordmark at the top.
+    // Stacked logo at the top.
     _gfx->draw16bitRGBBitmap((SCREEN_WIDTH - LOGO_W) / 2, 30, LOGO_RGB565, LOGO_W, LOGO_H);
 
     drawCenteredText("POS SETUP", SCREEN_WIDTH / 2, 135, 4, COL_ACCENT, COL_BG);
@@ -330,7 +330,7 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
     _screen = Screen::AMOUNT_ENTRY;
     if (!alreadyHere) {
         _gfx->fillScreen(COL_BG);
-        drawHeader("Lightning Pay");
+        drawHeader("Stacked Bitcoin");
         drawMenuButton();
     }
 
@@ -385,7 +385,7 @@ void DisplayUI::showAmountEntry(const String& amount, const String& currency) {
 void DisplayUI::showLoading(const String& message) {
     _screen = Screen::LOADING;
     _gfx->fillScreen(COL_BG);
-    drawHeader("Lightning Pay");
+    drawHeader("Stacked Bitcoin");
     drawCenteredText(message, SCREEN_WIDTH / 2, 380, 3, COL_FG, COL_BG);
     drawCenteredText(". . .", SCREEN_WIDTH / 2, 450, 3, COL_ACCENT, COL_BG);
 }
@@ -669,7 +669,7 @@ void DisplayUI::showTransactionHistory(const HistoryData& d,
     _gfx->fillScreen(COL_BG);
     drawHeader("Transactions");
 
-    // Back button (top-left, over the orange header).
+    // Back button (top-left, over the teal header).
     _gfx->fillRoundRect(BACK_X, BACK_Y, BACK_W, BACK_H, 7, COL_BG);
     drawCenteredText("< Back", BACK_X + BACK_W / 2, BACK_Y + BACK_H / 2, 2,
                      COL_ACCENT, COL_BG);

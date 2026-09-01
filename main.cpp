@@ -391,7 +391,7 @@ void setup() {
     Serial.begin(115200);
     delay(2000);  // give USB-CDC host time to (re)connect
     Serial.println("\n=============================");
-    Serial.println("  Lightning Pay POS — ESP32-P4");
+    Serial.println("  Stacked Bitcoin POS — ESP32-P4");
     Serial.println("=============================");
     Serial.flush();
 

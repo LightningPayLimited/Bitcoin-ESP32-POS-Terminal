@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LightningPay POS Setup</title>
+<title>Stacked Bitcoin POS Setup</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -13,7 +13,7 @@
     min-height: 100vh;
   }
   .container { max-width: 480px; width: 100%; }
-  .logo { color: #f7931a; font-size: 28px; font-weight: 800; margin-bottom: 4px; }
+  .logo { color: #14afac; font-size: 28px; font-weight: 800; margin-bottom: 4px; }
   .subtitle { color: #666; font-size: 14px; margin-bottom: 32px; }
 
   .card {
@@ -24,7 +24,7 @@
 
   .step { display: flex; gap: 12px; margin-bottom: 16px; align-items: flex-start; }
   .step-num {
-    background: #f7931a; color: #000; width: 24px; height: 24px;
+    background: #14afac; color: #000; width: 24px; height: 24px;
     border-radius: 50%; display: flex; align-items: center; justify-content: center;
     font-weight: 700; font-size: 13px; flex-shrink: 0; margin-top: 2px;
   }
@@ -36,21 +36,21 @@
     border: 1px solid #333; background: #1a1a1a; color: #fff;
     font-size: 15px;
   }
-  input:focus, select:focus { border-color: #f7931a; outline: none; }
+  input:focus, select:focus { border-color: #14afac; outline: none; }
   .hint { font-size: 12px; color: #555; margin-top: 4px; }
-  a { color: #f7931a; }
+  a { color: #14afac; }
 
   .row { display: flex; gap: 8px; align-items: center; }
   .row select { flex: 1; }
   .iconbtn {
-    width: auto; padding: 10px 14px; background: #222; color: #f7931a;
+    width: auto; padding: 10px 14px; background: #222; color: #14afac;
     border-radius: 8px; border: 1px solid #333; font-size: 15px; cursor: pointer;
     margin: 0;
   }
   .iconbtn:hover { background: #2a2a2a; }
   .iconbtn:disabled { color: #555; cursor: not-allowed; }
   .linkbtn {
-    background: none; color: #f7931a; border: none; padding: 6px 0;
+    background: none; color: #14afac; border: none; padding: 6px 0;
     font-size: 13px; cursor: pointer; text-align: left; width: auto; margin-top: 4px;
   }
   .hidden { display: none; }
@@ -60,9 +60,9 @@
     font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 20px;
     transition: background 0.2s;
   }
-  .btn-connect { background: #222; color: #f7931a; border: 1px solid #333; }
+  .btn-connect { background: #222; color: #14afac; border: 1px solid #333; }
   .btn-connect:hover { background: #2a2a2a; }
-  .btn-send { background: #f7931a; color: #000; }
+  .btn-send { background: #14afac; color: #000; }
   .btn-send:hover { background: #d97e00; }
   .btn-send:disabled { background: #333; color: #666; cursor: not-allowed; }
 
@@ -88,7 +88,7 @@
 </head>
 <body>
 <div class="container">
-  <div class="logo">&#x26A1; LightningPay POS Setup</div>
+  <div class="logo">&#x26A1; Stacked Bitcoin POS Setup</div>
   <p class="subtitle">Configure your Bitcoin point of sale terminal</p>
 
   <!-- Check Web Serial support -->

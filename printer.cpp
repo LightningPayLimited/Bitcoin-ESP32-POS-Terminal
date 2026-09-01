@@ -159,7 +159,7 @@ static void renderReceipt(const ReceiptJob& j) {
     // name; it's on the "Paid to" line already and too wide for 18 pt.
     const bool nameIsPayee = j.payee.length() && j.merchantName == j.payee;
     printText((j.merchantName.length() && !nameIsPayee) ? j.merchantName
-                                                        : "LIGHTNING PAY",
+                                                        : "STACKED BITCOIN",
               &FreeSansBold18pt7b, 'C', 40);
     if (j.gstNumber.length()) {
         printText("GST: " + j.gstNumber, &FreeSans12pt7b, 'C', 28);

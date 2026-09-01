@@ -26,42 +26,42 @@ static const char UPDATE_HTML[] PROGMEM = R"rawhtml(
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Lightning Pay Firmware Update</title>
+<title>Stacked Bitcoin Firmware Update</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, sans-serif; background: #111; color: #fff;
          display: flex; justify-content: center; padding: 20px; }
   .card { background: #1a1a1a; border-radius: 16px; padding: 32px;
           max-width: 440px; width: 100%; }
-  h1 { color: #f7931a; font-size: 24px; margin-bottom: 4px; }
+  h1 { color: #14afac; font-size: 24px; margin-bottom: 4px; }
   .sub { color: #888; font-size: 14px; margin-bottom: 20px; }
   .info { background: #222; border: 1px solid #333; border-radius: 8px;
           padding: 12px; font-size: 13px; color: #aaa; line-height: 1.6; }
   .info b { color: #ddd; font-weight: 600; }
   label.top { display: block; color: #ccc; font-size: 14px; margin: 20px 0 6px; }
   .pick { width: 100%; padding: 12px; border-radius: 8px; border: 1px dashed #444;
-          background: #222; color: #f7931a; font-size: 15px; cursor: pointer; }
-  .pick:hover { border-color: #f7931a; }
+          background: #222; color: #14afac; font-size: 15px; cursor: pointer; }
+  .pick:hover { border-color: #14afac; }
   .hint { color: #666; font-size: 12px; margin-top: 6px; }
   .hidden { display: none; }
   #list { margin-top: 16px; }
   .file { display: block; background: #222; border: 1px solid #333; border-radius: 8px;
           padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
   .file:hover { border-color: #555; }
-  .file.sel { border-color: #f7931a; }
-  .file input { margin-right: 8px; accent-color: #f7931a; }
+  .file.sel { border-color: #14afac; }
+  .file input { margin-right: 8px; accent-color: #14afac; }
   .fname { font-size: 14px; word-break: break-all; }
   .latest { color: #0c0; font-style: normal; font-size: 11px; font-weight: 700;
             border: 1px solid #0c0; border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
   .fmeta { display: block; color: #777; font-size: 12px; margin: 4px 0 0 24px; }
   .flash { width: 100%; padding: 14px; border-radius: 8px; border: none;
-           background: #f7931a; color: #000; font-size: 18px; font-weight: 700;
+           background: #14afac; color: #000; font-size: 18px; font-weight: 700;
            cursor: pointer; margin-top: 16px; }
   .flash:hover:enabled { background: #d97e00; }
   .flash:disabled { background: #444; color: #888; cursor: default; }
   .barwrap { margin-top: 16px; height: 22px; background: #222; border: 1px solid #333;
              border-radius: 8px; overflow: hidden; }
-  #bar { height: 100%; width: 0; background: #f7931a; transition: width .2s; }
+  #bar { height: 100%; width: 0; background: #14afac; transition: width .2s; }
   #status { margin-top: 12px; font-size: 14px; color: #aaa; min-height: 20px; }
   #status.err { color: #f55; }
   #status.ok { color: #0c0; }
@@ -70,7 +70,7 @@ static const char UPDATE_HTML[] PROGMEM = R"rawhtml(
 <body>
 <div class="card">
   <h1>&#9889; Firmware Update</h1>
-  <p class="sub">Lightning Pay POS terminal</p>
+  <p class="sub">Stacked Bitcoin POS terminal</p>
 
   <div class="info" id="info">Loading device info&hellip;</div>
 
