@@ -1,21 +1,37 @@
 #!/usr/bin/env bash
-# Assemble the thebitcointerminal.com site into dist/ ready for any static host:
+# Deploy thebitcointerminal.com — run after `pio run` cuts a release.
 #
-#   dist/index.html        <- site/index.html        (marketing site)
-#   dist/flash/index.html  <- webflash/index.html    (Web Serial flasher)
-#   dist/firmware/         <- firmware/              (builds + manifest.json)
-#
-# Upload dist/ to the host (e.g. `npx wrangler pages deploy dist` for
-# Cloudflare Pages, or drag it into the dashboard). Re-run after each
-# `pio run` release so the new build and manifest go up too.
+# Server layout: this repo is cloned at $REMOTE_DIR on $HOST with Apache's
+# docroot pointed at $REMOTE_DIR/site. The site and flasher update via
+# `git pull` (site/flash is a symlink to ../webflash); the firmware builds
+# are gitignored, so they only reach the server via the rsync below.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-rm -rf dist
-mkdir -p dist/flash
-cp site/index.html dist/index.html
-cp webflash/index.html dist/flash/index.html
-cp -r firmware dist/firmware
+HOST=lightningpay-web
+REMOTE_DIR=/var/www/thebitcointerminal.com/Bitcoin-ESP32-POS-Terminal
 
-echo "dist/ ready:"
-find dist -type f | sort | sed 's/^/  /'
+if [ -n "$(git status --porcelain)" ]; then
+  echo "WARNING: uncommitted local changes — the server only receives what is pushed." >&2
+fi
+
+echo "== push local commits =="
+git push origin master
+
+echo "== update site + flasher on $HOST =="
+ssh "$HOST" "set -e; cd '$REMOTE_DIR'; git pull --ff-only; \
+  [ -e site/flash ] || ln -s ../webflash site/flash"
+
+echo "== sync firmware builds + manifest =="
+rsync -av --delete firmware/ "$HOST:$REMOTE_DIR/site/firmware/"
+
+echo
+echo "== verify live =="
+for u in "" flash/ firmware/manifest.json; do
+  printf "  https://thebitcointerminal.com/%s => " "$u"
+  curl -s -o /dev/null -w "%{http_code}\n" --max-time 15 "https://thebitcointerminal.com/$u"
+done
+echo "Latest in manifest:"
+curl -s --max-time 15 https://thebitcointerminal.com/firmware/manifest.json \
+  | python3 -c "import json,sys; b=json.load(sys.stdin)['builds'][0]; print('  v%s @%s (%s)' % (b['version'], b['commit'], b['date']))" \
+  || echo "  (could not read manifest)"

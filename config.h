@@ -15,7 +15,7 @@
 // --- Firmware ---
 // Shown on the /update firmware portal next to the build timestamp.
 // Bump when cutting a release so devices report what they're running.
-#define FW_VERSION "1.0.0"
+#define FW_VERSION "1.0.1"
 
 // Public site hosting the firmware/ folder that fw_version.py maintains
 // (versioned .bins + manifest.json). The on-device update menu (Update

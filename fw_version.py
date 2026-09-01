@@ -177,12 +177,26 @@ def gen_manifest():
     print("fw_version: manifest.json — %d build(s)" % len(ordered))
 
 
-def copy_release(source, target, env):
+def copy_release():
+    app = env.subst("$BUILD_DIR/${PROGNAME}.bin")
+    data = open(app, "rb").read()
+    md5 = hashlib.md5(data).hexdigest()
+
+    # Idempotent: if this exact binary is already released for this
+    # version+commit, leave firmware/ alone (a cached rebuild would
+    # otherwise mint a duplicate entry stamped with today's date).
+    if os.path.isdir(OUTDIR):
+        for fn in os.listdir(OUTDIR):
+            m = NAME_RE.match(fn)
+            if (m and not m["fact"] and m["ver"] == FW_VER and m["rev"] == REV
+                    and hashlib.md5(open(os.path.join(OUTDIR, fn), "rb").read()).hexdigest() == md5):
+                print("fw_version: v%s @%s already released (%s)" % (FW_VER, REV, fn))
+                return
+
     stamp = datetime.date.today().isoformat()
-    stem = "stackedbitcoin-pos_v%s_%s_%s" % (FW_VER or fw_version(), stamp, REV)
+    stem = "stackedbitcoin-pos_v%s_%s_%s" % (FW_VER, stamp, REV)
     os.makedirs(OUTDIR, exist_ok=True)
 
-    app = env.subst("$BUILD_DIR/${PROGNAME}.bin")
     shutil.copy2(app, os.path.join(OUTDIR, stem + ".bin"))
     print("fw_version: copied build to firmware/%s.bin" % stem)
 
@@ -196,7 +210,25 @@ def copy_release(source, target, env):
     gen_manifest()
 
 
-# "buildprog" runs after the whole program build — including the platform's
-# firmware.factory.bin merge step, which a post-action on firmware.bin
-# would race against.
-env.AddPostAction("buildprog", copy_release)
+# Run at SCons exit rather than as an AddPostAction("buildprog") hook: the
+# buildprog alias isn't part of every build path (`pio run -t upload`
+# rebuilds without it, and a fully cached run skips its actions), which
+# silently left firmware/ stale. At exit the factory-image merge is done,
+# and GetBuildFailures tells us whether the build actually succeeded.
+def _finalize_release():
+    try:
+        from SCons.Script import GetBuildFailures
+        failures = GetBuildFailures()
+    except Exception:
+        failures = []
+    if failures or env.GetOption("clean"):
+        return
+    if SKIP_TARGETS.intersection(COMMAND_LINE_TARGETS):
+        return
+    if not os.path.exists(env.subst("$BUILD_DIR/${PROGNAME}.bin")):
+        return
+    copy_release()
+
+
+import atexit
+atexit.register(_finalize_release)
