@@ -399,3 +399,7 @@ in place of `user@domain`.
 - [ ] Sound via onboard ES8311 codec (cha-ching!)
 - [ ] ESP Web Tools flash button
 - [ ] Settings screen (WiFi reconfigure without factory reset)
+
+## License
+
+MIT — see [LICENSE](LICENSE).
