@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stacked Bitcoin POS</title>
+<meta name="description" content="An open-source Lightning Bitcoin point-of-sale terminal — QR and tap-to-pay, printed receipts, and settlement straight to your own wallet if you want it.">
+<meta property="og:title" content="Stacked Bitcoin POS">
+<meta property="og:description" content="The open-source Lightning point of sale. Take Bitcoin at the counter, keep the keys.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --g0:   #0C1110;   /* ground — teal-biased near-black          */
+    --g1:   #141B19;   /* panel                                    */
+    --g2:   #1B2422;   /* raised panel / hover                     */
+    --line: #24302D;   /* hairline                                 */
+    --teal: #14AFAC;   /* Stacked brand accent                     */
+    --teal-hi: #37D9D4;/* glow / hover on dark                     */
+    --btc:  #F7931A;   /* Bitcoin orange — sats & coin moments only*/
+    --paper:#EDEAE2;   /* receipt-paper white — headings           */
+    --body: #BFCCC8;   /* body text, teal-grey                     */
+    --dim:  #798D88;   /* secondary text                           */
+    --disp: "Chakra Petch", "Arial Narrow", sans-serif;
+    --sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", "Courier New", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--g0);
+    color: var(--body);
+    font: 400 1.02rem/1.7 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--teal-hi); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--teal-hi); outline-offset: 3px; border-radius: 2px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  h1, h2, h3 { font-family: var(--disp); color: var(--paper); text-wrap: balance; }
+  h1 { font-size: clamp(2.3rem, 5.4vw, 3.7rem); font-weight: 700; line-height: 1.08; letter-spacing: -0.01em; }
+  h2 { font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 600; line-height: 1.15; }
+  h3 { font-size: 1.05rem; font-weight: 600; }
+  .eyebrow {
+    font: 500 0.78rem/1 var(--mono); color: var(--teal);
+    text-transform: uppercase; letter-spacing: 0.18em; margin-bottom: 14px;
+  }
+  .lede { max-width: 34em; }
+
+  /* ---------- nav ---------- */
+  nav { border-bottom: 1px solid var(--line); }
+  .nav-in { display: flex; align-items: center; gap: 28px; height: 64px; }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--paper);
+           font: 600 1.12rem/1 var(--disp); }
+  .brand:hover { text-decoration: none; }
+  .brand svg { width: 30px; height: 30px; }
+  .nav-links { display: flex; gap: 22px; margin-left: auto; font-size: 0.92rem; }
+  .nav-links a { color: var(--dim); }
+  .nav-links a:hover { color: var(--teal-hi); text-decoration: none; }
+  .nav-gh { border: 1px solid var(--line); border-radius: 8px; padding: 7px 14px;
+            color: var(--body) !important; font-size: 0.88rem; }
+  .nav-gh:hover { border-color: var(--teal); text-decoration: none; }
+  @media (max-width: 720px) { .nav-links a:not(.nav-gh) { display: none; } }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 84px 0 90px; overflow: hidden; }
+  .hero-grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 56px; align-items: center; }
+  @media (max-width: 860px) { .hero-grid { grid-template-columns: 1fr; gap: 60px; } }
+  .hero p.lede { margin: 22px 0 32px; font-size: 1.08rem; }
+  .cta-row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .btn { display: inline-block; font: 600 0.95rem/1 var(--disp); border-radius: 9px;
+         padding: 15px 24px; letter-spacing: 0.02em; }
+  .btn:hover { text-decoration: none; }
+  .btn-solid { background: var(--teal); color: #06100F; }
+  .btn-solid:hover { background: var(--teal-hi); }
+  .btn-ghost { border: 1px solid var(--line); color: var(--body); }
+  .btn-ghost:hover { border-color: var(--teal); color: var(--teal-hi); }
+  .hero-foot { margin-top: 26px; font: 400 0.82rem/1.5 var(--mono); color: var(--dim); }
+
+  /* ---------- device mockup ---------- */
+  .device-col { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .device {
+    width: 292px; padding: 16px 14px 22px; border-radius: 26px;
+    background: linear-gradient(160deg, #232B29, #12100E 70%);
+    border: 1px solid #2E3936;
+    box-shadow: 0 30px 70px -30px rgba(20, 175, 172, 0.35),
+                0 12px 40px rgba(0, 0, 0, 0.55);
+  }
+  .screen { background: #000; border-radius: 10px; overflow: hidden;
+            border: 1px solid #000; }
+  .scr-accent { height: 4px; background: var(--teal); }
+  .scr-head { background: var(--teal); color: #06100F; text-align: center;
+              font: 600 0.9rem/1 var(--disp); padding: 11px 0; }
+  .scr-amt { text-align: center; padding: 16px 0 4px; color: #fff;
+             font: 500 1.5rem/1.2 var(--mono); }
+  .scr-sats { text-align: center; font: 400 0.82rem/1.4 var(--mono); color: var(--btc); }
+  .scr-qr { width: 178px; margin: 14px auto; background: #fff; border-radius: 6px;
+            padding: 10px; display: flex; align-items: center; justify-content: center; }
+  .scr-qr img, .scr-qr canvas { display: block; width: 158px !important; height: 158px !important; image-rendering: pixelated; }
+  .qr-fallback { width: 158px; height: 158px; display: flex; align-items: center;
+                 justify-content: center; color: #0C1110; font-size: 3rem; }
+  .scr-status { display: flex; align-items: center; justify-content: center; gap: 8px;
+                color: #cfd8d6; font: 400 0.8rem/1 var(--sans); padding: 4px 0 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal-hi); }
+  @keyframes pulse { 50% { opacity: 0.25; } }
+  .dot { animation: pulse 1.6s ease-in-out infinite; }
+  .scr-hint { text-align: center; color: #5c6a67; font: 400 0.74rem/1 var(--sans);
+              padding-bottom: 16px; }
+  .device-caption { font: 400 0.82rem/1.5 var(--mono); color: var(--dim); text-align: center; }
+  .device-caption b { color: var(--teal); font-weight: 500; }
+
+  /* ---------- sections ---------- */
+  section { padding: 78px 0; border-top: 1px solid var(--line); }
+  .sec-head { margin-bottom: 44px; max-width: 36em; }
+  .sec-head p { margin-top: 14px; }
+
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  @media (max-width: 860px) { .grid3 { grid-template-columns: 1fr; } .grid2 { grid-template-columns: 1fr; } }
+
+  .card { background: var(--g1); border: 1px solid var(--line); border-radius: 14px; padding: 24px; }
+  .card h3 { margin-bottom: 8px; }
+  .card p { font-size: 0.94rem; color: var(--dim); }
+  .card .glyph { color: var(--teal); margin-bottom: 14px; }
+  .card .glyph svg { width: 26px; height: 26px; }
+
+  /* sale steps — a real sequence, so numbered */
+  .step { position: relative; padding-top: 6px; }
+  .step-n { font: 700 0.85rem/1 var(--mono); color: var(--teal);
+            border: 1px solid var(--line); border-radius: 6px;
+            padding: 6px 9px; display: inline-block; margin-bottom: 16px; }
+  .step h3 { margin-bottom: 8px; }
+  .step p { font-size: 0.94rem; color: var(--dim); }
+
+  /* custody cards */
+  .cust .card { display: flex; flex-direction: column; gap: 8px; }
+  .cust .tag { align-self: flex-start; font: 500 0.7rem/1 var(--mono); letter-spacing: 0.12em;
+               text-transform: uppercase; border-radius: 5px; padding: 5px 8px;
+               background: var(--g2); color: var(--dim); margin-bottom: 6px; }
+  .cust .card.hi { border-color: var(--teal); background: linear-gradient(180deg, rgba(20,175,172,0.08), var(--g1) 55%); }
+  .cust .card.hi .tag { background: var(--teal); color: #06100F; }
+  .cust .card p  { flex-grow: 1; }
+  .cust .how { font: 400 0.78rem/1.6 var(--mono); color: var(--dim); border-top: 1px solid var(--line); padding-top: 12px; }
+
+  /* specs */
+  .spec-table { width: 100%; border-collapse: collapse; font: 400 0.9rem/1.6 var(--mono); }
+  .spec-table td { padding: 13px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+  .spec-table tr:last-child td { border-bottom: 1px solid var(--line); }
+  .spec-table td:first-child { color: var(--dim); width: 34%; white-space: nowrap; }
+  .spec-table td:last-child { color: var(--body); }
+  .spec-scroll { overflow-x: auto; }
+  .spec-note { margin-top: 18px; font-size: 0.9rem; color: var(--dim); }
+
+  /* open source */
+  .term { background: #090D0C; border: 1px solid var(--line); border-radius: 12px;
+          padding: 20px 22px; font: 400 0.88rem/1.9 var(--mono); overflow-x: auto; }
+  .term .ps { color: var(--teal); user-select: none; }
+  .term .cm { color: var(--dim); }
+  .term-out { color: var(--dim); }
+  .os-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+  @media (max-width: 860px) { .os-grid { grid-template-columns: 1fr; } }
+  .os-list { list-style: none; display: flex; flex-direction: column; gap: 14px; margin-top: 26px; }
+  .os-list li { display: flex; gap: 12px; font-size: 0.96rem; }
+  .os-list .tick { color: var(--teal); font-family: var(--mono); flex-shrink: 0; }
+
+  /* CTA band */
+  .cta-band { text-align: center; }
+  .cta-band .cta-row { justify-content: center; margin-top: 30px; }
+  .sats { font-family: var(--mono); color: var(--btc); }
+
+  footer { border-top: 1px solid var(--line); padding: 34px 0 44px; }
+  .foot-in { display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+             font-size: 0.86rem; color: var(--dim); }
+  .foot-in .brand { font-size: 0.98rem; }
+  .foot-in .brand svg { width: 22px; height: 22px; }
+  .foot-links { margin-left: auto; display: flex; gap: 20px; }
+  .foot-links a { color: var(--dim); }
+  .foot-links a:hover { color: var(--teal-hi); }
+
+  /* scroll reveal — disabled entirely under reduced motion */
+  .rv { opacity: 0; transform: translateY(14px); transition: opacity 0.55s ease, transform 0.55s ease; }
+  .rv.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .rv { opacity: 1; transform: none; transition: none; }
+    .dot { animation: none; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-in">
+    <a class="brand" href="#">
+      <svg viewBox="0 0 317.691 315.021" aria-hidden="true"><path fill="#14AFAC" d="M 252.449219 206.972656 L 217.027344 186.488281 L 211.417969 190.273438 L 247.878906 211.335938 C 247.230469 211.820312 246.515625 212.289062 245.746094 212.542969 L 161.195312 260.6875 L 161.28125 212.0625 L 252.53125 160.101562 Z M 113.019531 188.960938 L 155.203125 212.84375 L 155.121094 261.382812 L 69.859375 213.109375 Z M 113.03125 133.402344 L 121.957031 138.457031 L 193.894531 180.105469 L 199.75 176.457031 L 160.710938 153.867188 C 159.839844 153.1875 158.890625 152.46875 157.554688 151.628906 L 124.796875 133.082031 L 121.460938 131.152344 L 121.445312 131.183594 L 119.238281 129.933594 L 158.292969 108.097656 L 196.707031 129.335938 L 196.660156 129.359375 C 196.839844 129.433594 197.011719 129.523438 197.1875 129.601562 L 202.710938 132.652344 C 202.78125 132.699219 202.851562 132.738281 202.921875 132.785156 L 202.933594 132.777344 L 246.214844 156.707031 L 157.554688 207.195312 L 69.859375 157.542969 Z M 63.835938 105.546875 L 106.847656 129.902344 L 63.753906 153.996094 Z M 155.199219 54.257812 L 155.117188 102.914062 L 113.054688 126.433594 L 69.859375 101.976562 Z M 202.890625 125.8125 L 161.191406 102.757812 L 161.273438 54.175781 L 246.214844 101.140625 Z M 209.117188 129.257812 L 258.628906 101.0625 L 158.277344 45.582031 L 57.472656 101.941406 L 57.898438 102.183594 L 57.769531 102.183594 L 57.675781 157.394531 L 57.472656 157.507812 L 106.839844 185.460938 L 57.472656 213.078125 L 157.5625 269.746094 L 258.492188 212.273438 L 258.515625 212.273438 L 258.515625 212.261719 L 258.628906 212.195312 L 258.515625 212.132812 L 258.609375 156.9375 L 258.09375 156.933594 L 258.628906 156.628906 Z"/></svg>
+      Stacked
+    </a>
+    <div class="nav-links">
+      <a href="#sale">How it works</a>
+      <a href="#custody">Custody</a>
+      <a href="#hardware">Hardware</a>
+      <a href="#source">Source</a>
+      <a class="nav-gh" href="https://github.com/LightningPayLimited/ESP32-POS">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow">Open-source Lightning point of sale</p>
+      <h1>Take Lightning payments. Keep the keys.</h1>
+      <p class="lede">Stacked POS is a touchscreen Bitcoin terminal for the counter.
+        Customers pay by QR scan or tap-to-pay card, the receipt prints itself,
+        and the sats settle wherever you say — your Stacked account, your own
+        BTCPay Server, or straight into your own wallet with no one in between.</p>
+      <div class="cta-row">
+        <a class="btn btn-solid" href="https://github.com/LightningPayLimited/ESP32-POS">Get the source</a>
+        <a class="btn btn-ghost" href="flash/">Flash a device from your browser</a>
+      </div>
+      <p class="hero-foot">ESP32-P4 · 4.3&Prime; touch · NFC tap-to-pay · thermal receipts</p>
+    </div>
+    <div class="device-col">
+      <div class="device" aria-label="Stacked POS terminal showing a Lightning payment screen">
+        <div class="screen">
+          <div class="scr-head">Stacked Bitcoin</div>
+          <div class="scr-amt">$12.50 NZD</div>
+          <div class="scr-sats">21,000 sats</div>
+          <div class="scr-qr"><div id="qr"><div class="qr-fallback">&#9889;</div></div></div>
+          <div class="scr-status"><span class="dot"></span>Waiting for payment&hellip;</div>
+          <div class="scr-hint">or tap card to pay</div>
+          <div class="scr-accent"></div>
+        </div>
+      </div>
+      <p class="device-caption">The QR is real — <b>scan the screen</b> and you land on the source code.</p>
+    </div>
+  </div>
+</header>
+
+<section id="sale">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <p class="eyebrow">How a sale works</p>
+      <h2>Three beats, ten seconds</h2>
+    </div>
+    <div class="grid3">
+      <div class="step rv">
+        <span class="step-n">01</span>
+        <h3>Punch in the price</h3>
+        <p>Enter the amount in your currency on the numpad — the terminal converts
+           to sats at the live rate. Price in dollars, or work straight in sats
+           if that's how you run.</p>
+      </div>
+      <div class="step rv">
+        <span class="step-n">02</span>
+        <h3>Customer scans or taps</h3>
+        <p>A Lightning invoice appears as a QR for any wallet, and the built-in
+           NFC reader takes Boltcard tap-to-pay at the same time. Whichever lands
+           first wins.</p>
+      </div>
+      <div class="step rv">
+        <span class="step-n">03</span>
+        <h3>Paid, printed, done</h3>
+        <p>Settlement is confirmed within seconds, the PAID screen flashes up,
+           and the thermal printer hands your customer a receipt without being
+           asked.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="custody" class="cust">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <p class="eyebrow">Where the money goes</p>
+      <h2>Your keys, your call</h2>
+      <p>The same terminal speaks three back ends. Pick one at setup — switch
+         whenever you like.</p>
+    </div>
+    <div class="grid3">
+      <div class="card rv">
+        <span class="tag">Managed</span>
+        <h3>Stacked</h3>
+        <p>Plug in a merchant API key and go. Adds a live takings screen on the
+           device — daily, weekly and monthly totals with per-sale status checks.</p>
+        <p class="how">API key &rarr; app.stackedbitcoin.com</p>
+      </div>
+      <div class="card rv">
+        <span class="tag">Your server</span>
+        <h3>BTCPay Server</h3>
+        <p>Point it at any BTCPay Server instance over the Greenfield API. Your
+           node, your store, your rules — the terminal is just another checkout.</p>
+        <p class="how">Greenfield API &rarr; your BTCPay instance</p>
+      </div>
+      <div class="card hi rv">
+        <span class="tag">No custodian</span>
+        <h3>Self-custody</h3>
+        <p>Type in your wallet's Lightning Address and nothing else. No account,
+           no API key, no intermediary — every payment lands directly in your
+           own wallet while the customer is still at the counter.</p>
+        <p class="how">LNURL-pay &rarr; your wallet, verified per sale</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="hardware">
+  <div class="wrap os-grid">
+    <div class="rv">
+      <p class="eyebrow">Hardware</p>
+      <h2>Real silicon, no black boxes</h2>
+      <p style="margin-top:14px">Built on the Guition JC4880P443 — an ESP32-P4
+         board with the display, touch and Wi-Fi already on it. Add the NFC
+         reader and printer, print the case, and you have a terminal.</p>
+      <p class="spec-note">The enclosure is a 3D-printable STL in the repo, and
+         everything wires to the board's own connectors — no custom PCB.</p>
+    </div>
+    <div class="spec-scroll rv">
+      <table class="spec-table">
+        <tr><td>Processor</td><td>ESP32-P4, dual-core RISC-V @ 400&nbsp;MHz</td></tr>
+        <tr><td>Display</td><td>4.3&Prime; IPS 480&times;800, MIPI-DSI, capacitive touch</td></tr>
+        <tr><td>Wi-Fi</td><td>ESP32-C6 companion chip (ESP-Hosted)</td></tr>
+        <tr><td>Tap-to-pay</td><td>PN532 NFC — Boltcard / LNURL-withdraw</td></tr>
+        <tr><td>Receipts</td><td>CSN-A2 thermal printer, 58&nbsp;mm paper</td></tr>
+        <tr><td>Storage</td><td>16&nbsp;MB flash, dual OTA slots</td></tr>
+        <tr><td>Setup</td><td>Captive portal, Web Serial, or serial console</td></tr>
+        <tr><td>Updates</td><td>OTA from your own host, or USB from a browser</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="source">
+  <div class="wrap os-grid">
+    <div class="rv">
+      <p class="eyebrow">Open source</p>
+      <h2>Audit the till you run your shop on</h2>
+      <ul class="os-list">
+        <li><span class="tick">&#10003;</span><span>Full firmware source — C++ on PlatformIO, one <span style="font-family:var(--mono)">pio run</span> from clone to flashable build</span></li>
+        <li><span class="tick">&#10003;</span><span>Web flasher and firmware manifest you host on your own domain — updates never depend on us</span></li>
+        <li><span class="tick">&#10003;</span><span>3D-printable enclosure included</span></li>
+        <li><span class="tick">&#10003;</span><span>No telemetry, no phone-home — the device talks to your back end and a public spot-rate feed, nothing else</span></li>
+        <li><span class="tick">&#10003;</span><span>Swap the branding, the currency, even the payment back end — it's your code</span></li>
+      </ul>
+    </div>
+    <div class="rv">
+      <div class="term" aria-label="Terminal commands to build the firmware">
+        <div><span class="ps">$</span> git clone github.com/LightningPayLimited/ESP32-POS</div>
+        <div><span class="ps">$</span> pio run <span class="cm"># prompts for the version, builds, done</span></div>
+        <div class="term-out">fw_version: building v1.0.0</div>
+        <div class="term-out">Successfully created ESP32-P4 image.</div>
+        <div style="margin-top:14px"><span class="ps">$</span> <span class="cm"># no soldering iron? flash over USB from Chrome</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="cta-band">
+  <div class="wrap rv">
+    <p class="eyebrow">Get started</p>
+    <h2>Put Bitcoin on the counter</h2>
+    <p style="margin-top:14px">Clone it, flash it, and take your first
+       <span class="sats">sats</span> this afternoon.</p>
+    <div class="cta-row">
+      <a class="btn btn-solid" href="https://github.com/LightningPayLimited/ESP32-POS">View on GitHub</a>
+      <a class="btn btn-ghost" href="flash/">Open the web flasher</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-in">
+    <a class="brand" href="#">
+      <svg viewBox="0 0 317.691 315.021" aria-hidden="true"><path fill="#14AFAC" d="M 252.449219 206.972656 L 217.027344 186.488281 L 211.417969 190.273438 L 247.878906 211.335938 C 247.230469 211.820312 246.515625 212.289062 245.746094 212.542969 L 161.195312 260.6875 L 161.28125 212.0625 L 252.53125 160.101562 Z M 113.019531 188.960938 L 155.203125 212.84375 L 155.121094 261.382812 L 69.859375 213.109375 Z M 113.03125 133.402344 L 121.957031 138.457031 L 193.894531 180.105469 L 199.75 176.457031 L 160.710938 153.867188 C 159.839844 153.1875 158.890625 152.46875 157.554688 151.628906 L 124.796875 133.082031 L 121.460938 131.152344 L 121.445312 131.183594 L 119.238281 129.933594 L 158.292969 108.097656 L 196.707031 129.335938 L 196.660156 129.359375 C 196.839844 129.433594 197.011719 129.523438 197.1875 129.601562 L 202.710938 132.652344 C 202.78125 132.699219 202.851562 132.738281 202.921875 132.785156 L 202.933594 132.777344 L 246.214844 156.707031 L 157.554688 207.195312 L 69.859375 157.542969 Z M 63.835938 105.546875 L 106.847656 129.902344 L 63.753906 153.996094 Z M 155.199219 54.257812 L 155.117188 102.914062 L 113.054688 126.433594 L 69.859375 101.976562 Z M 202.890625 125.8125 L 161.191406 102.757812 L 161.273438 54.175781 L 246.214844 101.140625 Z M 209.117188 129.257812 L 258.628906 101.0625 L 158.277344 45.582031 L 57.472656 101.941406 L 57.898438 102.183594 L 57.769531 102.183594 L 57.675781 157.394531 L 57.472656 157.507812 L 106.839844 185.460938 L 57.472656 213.078125 L 157.5625 269.746094 L 258.492188 212.273438 L 258.515625 212.273438 L 258.515625 212.261719 L 258.628906 212.195312 L 258.515625 212.132812 L 258.609375 156.9375 L 258.09375 156.933594 L 258.628906 156.628906 Z"/></svg>
+      Stacked
+    </a>
+    <span>Bitcoin point of sale, in the open.</span>
+    <div class="foot-links">
+      <a href="https://github.com/LightningPayLimited/ESP32-POS">GitHub</a>
+      <a href="https://stackedbitcoin.com">stackedbitcoin.com</a>
+      <a href="flash/">Web flasher</a>
+    </div>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+  // Real QR on the mock terminal screen — scans to the source repo.
+  (function () {
+    if (!window.QRCode) return;  // offline: keep the bolt fallback
+    var el = document.getElementById("qr");
+    el.textContent = "";
+    new QRCode(el, {
+      text: "https://github.com/LightningPayLimited/ESP32-POS",
+      width: 158, height: 158,
+      colorDark: "#0C1110", colorLight: "#FFFFFF",
+      correctLevel: QRCode.CorrectLevel.M
+    });
+  })();
+
+  // Scroll reveal; skipped under reduced motion (CSS shows everything).
+  (function () {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.15 });
+    document.querySelectorAll(".rv").forEach(function (el) { io.observe(el); });
+  })();
+</script>
+</body>
+</html>
