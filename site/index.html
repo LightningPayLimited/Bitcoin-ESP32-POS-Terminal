@@ -8,6 +8,7 @@
 <meta property="og:title" content="The Bitcoin Terminal">
 <meta property="og:description" content="The open-source Lightning point of sale, built by Stacked. Take Bitcoin at the counter, keep the keys.">
 <meta property="og:url" content="https://thebitcointerminal.com">
+<meta property="og:image" content="https://thebitcointerminal.com/pos.jpg">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   :root {
@@ -71,7 +72,7 @@
 
   /* ---------- hero ---------- */
   .hero { padding: 84px 0 90px; overflow: hidden; }
-  .hero-grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 56px; align-items: center; }
+  .hero-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
   @media (max-width: 860px) { .hero-grid { grid-template-columns: 1fr; gap: 60px; } }
   .hero p.lede { margin: 22px 0 32px; font-size: 1.08rem; }
   .cta-row { display: flex; gap: 14px; flex-wrap: wrap; }
@@ -92,35 +93,12 @@
   .stacked-lockup.foot { margin-top: 0; gap: 10px; }
   .stacked-lockup.foot svg { width: 170px; height: 43px; }
 
-  /* ---------- device mockup ---------- */
-  .device-col { display: flex; flex-direction: column; align-items: center; gap: 16px; }
-  .device {
-    width: 292px; padding: 16px 14px 22px; border-radius: 26px;
-    background: linear-gradient(160deg, #232B29, #12100E 70%);
-    border: 1px solid #2E3936;
-    box-shadow: 0 30px 70px -30px rgba(20, 175, 172, 0.35),
-                0 12px 40px rgba(0, 0, 0, 0.55);
-  }
-  .screen { background: #000; border-radius: 10px; overflow: hidden;
-            border: 1px solid #000; }
-  .scr-accent { height: 4px; background: var(--teal); }
-  .scr-head { background: var(--teal); color: #06100F; text-align: center;
-              font: 600 0.9rem/1 var(--disp); padding: 11px 0; }
-  .scr-amt { text-align: center; padding: 16px 0 4px; color: #fff;
-             font: 500 1.5rem/1.2 var(--mono); }
-  .scr-sats { text-align: center; font: 400 0.82rem/1.4 var(--mono); color: var(--btc); }
-  .scr-qr { width: 178px; margin: 14px auto; background: #fff; border-radius: 6px;
-            padding: 10px; display: flex; align-items: center; justify-content: center; }
-  .scr-qr img, .scr-qr canvas { display: block; width: 158px !important; height: 158px !important; image-rendering: pixelated; }
-  .qr-fallback { width: 158px; height: 158px; display: flex; align-items: center;
-                 justify-content: center; color: #0C1110; font-size: 3rem; }
-  .scr-status { display: flex; align-items: center; justify-content: center; gap: 8px;
-                color: #cfd8d6; font: 400 0.8rem/1 var(--sans); padding: 4px 0 8px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal-hi); }
-  @keyframes pulse { 50% { opacity: 0.25; } }
-  .dot { animation: pulse 1.6s ease-in-out infinite; }
-  .scr-hint { text-align: center; color: #5c6a67; font: 400 0.74rem/1 var(--sans);
-              padding-bottom: 16px; }
+  /* ---------- hero photo ---------- */
+  .hero-photo { margin: 0; }
+  .hero-photo img { display: block; width: 100%; height: auto; border-radius: 18px;
+                    border: 1px solid var(--line);
+                    box-shadow: 0 30px 70px -30px rgba(20, 175, 172, 0.35),
+                                0 12px 40px rgba(0, 0, 0, 0.55); }
 
   /* ---------- sections ---------- */
   section { padding: 78px 0; border-top: 1px solid var(--line); }
@@ -247,19 +225,10 @@
       </a>
       <p class="hero-foot">ESP32-P4 · 4.3&Prime; touch · NFC tap-to-pay · thermal receipts</p>
     </div>
-    <div class="device-col">
-      <div class="device" aria-label="Stacked POS terminal showing a Lightning payment screen">
-        <div class="screen">
-          <div class="scr-head">Stacked Bitcoin</div>
-          <div class="scr-amt">$12.50 NZD</div>
-          <div class="scr-sats">21,000 sats</div>
-          <div class="scr-qr"><div id="qr"><div class="qr-fallback">&#9889;</div></div></div>
-          <div class="scr-status"><span class="dot"></span>Waiting for payment&hellip;</div>
-          <div class="scr-hint">or tap card to pay</div>
-          <div class="scr-accent"></div>
-        </div>
-      </div>
-    </div>
+    <figure class="hero-photo">
+      <img src="pos.jpg" width="1600" height="1172"
+           alt="Two Bitcoin Terminal units in 3D-printed cases, one showing the amount numpad and one showing the Pay with Bitcoin screen">
+    </figure>
   </div>
 </header>
 
@@ -443,21 +412,7 @@
   </div>
 </footer>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
-  // Real QR on the mock terminal screen — scans to the source repo.
-  (function () {
-    if (!window.QRCode) return;  // offline: keep the bolt fallback
-    var el = document.getElementById("qr");
-    el.textContent = "";
-    new QRCode(el, {
-      text: "https://github.com/LightningPayLimited/Bitcoin-ESP32-POS-Terminal",
-      width: 158, height: 158,
-      colorDark: "#0C1110", colorLight: "#FFFFFF",
-      correctLevel: QRCode.CorrectLevel.M
-    });
-  })();
-
   // The flasher lives at flash/ on the deployed site but at ../webflash/ in
   // a repo checkout — rewrite the links when flash/ isn't there.
   fetch("flash/", { method: "HEAD" })
