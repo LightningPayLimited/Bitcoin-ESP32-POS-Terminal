@@ -55,11 +55,12 @@
            font: 600 1.12rem/1 var(--disp); }
   .brand:hover { text-decoration: none; }
   .brand svg { width: 30px; height: 30px; }
-  .by { display: inline-flex; align-items: center; gap: 7px;
-        font: 400 0.78rem/1 var(--mono); color: var(--dim); white-space: nowrap; }
-  .by svg { width: 16px; height: 16px; }
-  .by a { color: var(--body); }
-  @media (max-width: 720px) { .nav-in .by { display: none; } }
+  .by { display: inline-flex; align-items: center; gap: 8px;
+        font: 500 0.84rem/1 var(--mono); color: var(--body); white-space: nowrap; }
+  .by svg { width: 18px; height: 18px; }
+  .by a { color: var(--teal-hi); }
+  footer .by { font: 500 0.92rem/1 var(--sans); }
+  footer .by svg { width: 20px; height: 20px; }
   .nav-links { display: flex; gap: 22px; margin-left: auto; font-size: 0.92rem; }
   .nav-links a { color: var(--dim); }
   .nav-links a:hover { color: var(--teal-hi); text-decoration: none; }
@@ -81,7 +82,12 @@
   .btn-solid:hover { background: var(--teal-hi); }
   .btn-ghost { border: 1px solid var(--line); color: var(--body); }
   .btn-ghost:hover { border-color: var(--teal); color: var(--teal-hi); }
-  .hero-foot { margin-top: 26px; font: 400 0.82rem/1.5 var(--mono); color: var(--dim); }
+  .hero-foot { margin-top: 16px; font: 400 0.82rem/1.5 var(--mono); color: var(--dim); }
+  .stacked-badge { display: inline-flex; align-items: center; gap: 9px; margin-top: 28px;
+                   border: 1px solid var(--teal); border-radius: 999px; padding: 10px 16px;
+                   font: 500 0.9rem/1 var(--sans); color: var(--paper); }
+  .stacked-badge svg { width: 19px; height: 19px; }
+  .stacked-badge a { color: var(--teal-hi); font-weight: 600; }
 
   /* ---------- device mockup ---------- */
   .device-col { display: flex; flex-direction: column; align-items: center; gap: 16px; }
@@ -234,6 +240,7 @@
         <a class="btn btn-solid" href="https://github.com/LightningPayLimited/Bitcoin-ESP32-POS-Terminal">Get the source</a>
         <a class="btn btn-ghost" href="flash/">Flash a device from your browser</a>
       </div>
+      <p class="stacked-badge"><svg viewBox="0 0 317.691 315.021" aria-hidden="true"><use href="#cube"/></svg>Built &amp; released open source by&nbsp;<a href="https://stackedbitcoin.com">Stacked</a></p>
       <p class="hero-foot">ESP32-P4 · 4.3&Prime; touch · NFC tap-to-pay · thermal receipts</p>
     </div>
     <div class="device-col">
@@ -368,7 +375,7 @@
         <table class="parts">
           <tr><td>Guition JC4880P443<span>ESP32-P4 board with the 4.3&Prime; touch display &amp; C6 Wi-Fi</span></td><td><a href="https://www.aliexpress.com/item/1005010425057615.html">AliExpress</a></td></tr>
           <tr><td>PN532 NFC module<span>13.56&nbsp;MHz reader for tap-to-pay, wires to the board&rsquo;s CN3 connector</span></td><td><a href="https://www.aliexpress.com/item/1005001934351717.html">AliExpress</a></td></tr>
-          <tr><td>NFC connector cable<span>SH/JST-to-DuPont set, joins the PN532 to CN3</span></td><td><a href="https://www.aliexpress.com/item/1005006251847933.html">AliExpress</a></td></tr>
+          <tr><td>NFC connector cable<span>order the <b>SH 1.0&nbsp;mm &middot; 4P &middot; 5&nbsp;pcs</b> variant &mdash; joins the PN532 to the board&rsquo;s CN3</span></td><td><a href="https://www.aliexpress.com/item/1005006251847933.html">AliExpress</a></td></tr>
           <tr><td>USB-C power cable<span>90&deg; angled, sits flush in the case</span></td><td><a href="https://www.aliexpress.com/item/1005005373218322.html">AliExpress</a></td></tr>
           <tr><td>CSN-A2 thermal printer<span>TTL serial, 58&nbsp;mm paper &mdash; optional, for receipts</span></td><td class="pending">link soon</td></tr>
         </table>
@@ -444,6 +451,14 @@
       correctLevel: QRCode.CorrectLevel.M
     });
   })();
+
+  // The flasher lives at flash/ on the deployed site but at ../webflash/ in
+  // a repo checkout — rewrite the links when flash/ isn't there.
+  fetch("flash/", { method: "HEAD" })
+    .then(function (r) { if (!r.ok) throw 0; })
+    .catch(function () {
+      document.querySelectorAll('a[href="flash/"]').forEach(function (a) { a.href = "../webflash/"; });
+    });
 
   // Scroll reveal; skipped under reduced motion (CSS shows everything).
   (function () {
