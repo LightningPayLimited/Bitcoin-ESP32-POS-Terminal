@@ -1,4 +1,4 @@
-# Lightning Pay POS — ESP32-P4 Lightning Bitcoin Point of Sale
+# Stacked Bitcoin POS — ESP32-P4 Lightning Bitcoin Point of Sale
 
 A hardware POS terminal that accepts Lightning Bitcoin payments — by QR code or
 Boltcard tap-to-pay — and prints receipts. Backends: the
@@ -244,8 +244,8 @@ release copies into `firmware/` (gitignored):
 
 ```
 firmware/
-├── lightningpay-pos_v1.0.0_2026-07-08_ceb7bdf.bin           # OTA app image
-├── lightningpay-pos_v1.0.0_2026-07-08_ceb7bdf_factory.bin   # full image @0x0
+├── stackedbitcoin-pos_v1.0.0_2026-07-08_ceb7bdf.bin           # OTA app image
+├── stackedbitcoin-pos_v1.0.0_2026-07-08_ceb7bdf_factory.bin   # full image @0x0
 └── manifest.json           # all builds: version/date/commit/size/md5/sha256
 ```
 
@@ -273,16 +273,19 @@ https://your-host/
 ├── index.html              <- copy of webflash/index.html
 └── firmware/               <- copy of the repo's firmware/ folder
     ├── manifest.json
-    ├── lightningpay-pos_v1.0.0_2026-07-08_ceb7bdf.bin
-    └── lightningpay-pos_v1.0.0_2026-07-08_ceb7bdf_factory.bin
+    ├── stackedbitcoin-pos_v1.0.0_2026-07-08_ceb7bdf.bin
+    └── stackedbitcoin-pos_v1.0.0_2026-07-08_ceb7bdf_factory.bin
 ```
 
 Then point the devices at it: set `FW_MANIFEST_URL` in `config.h` to
-`https://your-host/firmware/manifest.json` (it ships as an `example.com`
-placeholder) and reflash once — after that, devices update themselves from
-the site via the on-device menu.
+`https://your-host/firmware/manifest.json` (it ships pointing at
+`stackedbitcoin.com`) and reflash once — after that, devices update
+themselves from the site via the on-device menu.
 
-To cut a release: bump `FW_VERSION` in `config.h`, commit, `pio run`, and
+To cut a release: `pio run` and type the new version at the prompt — plain
+Enter keeps the last one. `FW_VERSION` in `config.h` is still the store; the
+build writes the new version back there for you. For non-interactive bumps,
+`FW_VERSION_OVERRIDE=x.y.z pio run` skips the prompt. Then commit and
 re-upload the `firmware/` folder.
 
 ### Notes & caveats
