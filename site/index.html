@@ -3,10 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stacked Bitcoin POS</title>
-<meta name="description" content="An open-source Lightning Bitcoin point-of-sale terminal — QR and tap-to-pay, printed receipts, and settlement straight to your own wallet if you want it.">
-<meta property="og:title" content="Stacked Bitcoin POS">
-<meta property="og:description" content="The open-source Lightning point of sale. Take Bitcoin at the counter, keep the keys.">
+<title>The Bitcoin Terminal</title>
+<meta name="description" content="An open-source Lightning Bitcoin point-of-sale terminal by Stacked — QR and tap-to-pay, printed receipts, and settlement straight to your own wallet if you want it.">
+<meta property="og:title" content="The Bitcoin Terminal">
+<meta property="og:description" content="The open-source Lightning point of sale, built by Stacked. Take Bitcoin at the counter, keep the keys.">
+<meta property="og:url" content="https://thebitcointerminal.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   :root {
@@ -54,6 +55,11 @@
            font: 600 1.12rem/1 var(--disp); }
   .brand:hover { text-decoration: none; }
   .brand svg { width: 30px; height: 30px; }
+  .by { display: inline-flex; align-items: center; gap: 7px;
+        font: 400 0.78rem/1 var(--mono); color: var(--dim); white-space: nowrap; }
+  .by svg { width: 16px; height: 16px; }
+  .by a { color: var(--body); }
+  @media (max-width: 720px) { .nav-in .by { display: none; } }
   .nav-links { display: flex; gap: 22px; margin-left: auto; font-size: 0.92rem; }
   .nav-links a { color: var(--dim); }
   .nav-links a:hover { color: var(--teal-hi); text-decoration: none; }
@@ -151,6 +157,15 @@
   .spec-scroll { overflow-x: auto; }
   .spec-note { margin-top: 18px; font-size: 0.9rem; color: var(--dim); }
 
+  /* build one — downloads + parts list */
+  .dl-list { list-style: none; display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+  .dl-list span { color: var(--dim); font-size: 0.9rem; }
+  .parts { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  .parts td { padding: 11px 6px; border-top: 1px solid var(--line); font-size: 0.92rem; vertical-align: middle; }
+  .parts td span { display: block; color: var(--dim); font-size: 0.8rem; }
+  .parts td:last-child { text-align: right; white-space: nowrap; font: 500 0.82rem/1 var(--mono); }
+  .parts .pending { color: var(--dim); }
+
   /* open source */
   .term { background: #090D0C; border: 1px solid var(--line); border-radius: 12px;
           padding: 20px 22px; font: 400 0.88rem/1.9 var(--mono); overflow-x: auto; }
@@ -189,16 +204,17 @@
 </head>
 <body>
 
+<svg style="display:none" aria-hidden="true"><symbol id="cube" viewBox="0 0 317.691 315.021"><path fill="#14AFAC" d="M 252.449219 206.972656 L 217.027344 186.488281 L 211.417969 190.273438 L 247.878906 211.335938 C 247.230469 211.820312 246.515625 212.289062 245.746094 212.542969 L 161.195312 260.6875 L 161.28125 212.0625 L 252.53125 160.101562 Z M 113.019531 188.960938 L 155.203125 212.84375 L 155.121094 261.382812 L 69.859375 213.109375 Z M 113.03125 133.402344 L 121.957031 138.457031 L 193.894531 180.105469 L 199.75 176.457031 L 160.710938 153.867188 C 159.839844 153.1875 158.890625 152.46875 157.554688 151.628906 L 124.796875 133.082031 L 121.460938 131.152344 L 121.445312 131.183594 L 119.238281 129.933594 L 158.292969 108.097656 L 196.707031 129.335938 L 196.660156 129.359375 C 196.839844 129.433594 197.011719 129.523438 197.1875 129.601562 L 202.710938 132.652344 C 202.78125 132.699219 202.851562 132.738281 202.921875 132.785156 L 202.933594 132.777344 L 246.214844 156.707031 L 157.554688 207.195312 L 69.859375 157.542969 Z M 63.835938 105.546875 L 106.847656 129.902344 L 63.753906 153.996094 Z M 155.199219 54.257812 L 155.117188 102.914062 L 113.054688 126.433594 L 69.859375 101.976562 Z M 202.890625 125.8125 L 161.191406 102.757812 L 161.273438 54.175781 L 246.214844 101.140625 Z M 209.117188 129.257812 L 258.628906 101.0625 L 158.277344 45.582031 L 57.472656 101.941406 L 57.898438 102.183594 L 57.769531 102.183594 L 57.675781 157.394531 L 57.472656 157.507812 L 106.839844 185.460938 L 57.472656 213.078125 L 157.5625 269.746094 L 258.492188 212.273438 L 258.515625 212.273438 L 258.515625 212.261719 L 258.628906 212.195312 L 258.515625 212.132812 L 258.609375 156.9375 L 258.09375 156.933594 L 258.628906 156.628906 Z"/></symbol></svg>
+
 <nav>
   <div class="wrap nav-in">
-    <a class="brand" href="#">
-      <svg viewBox="0 0 317.691 315.021" aria-hidden="true"><path fill="#14AFAC" d="M 252.449219 206.972656 L 217.027344 186.488281 L 211.417969 190.273438 L 247.878906 211.335938 C 247.230469 211.820312 246.515625 212.289062 245.746094 212.542969 L 161.195312 260.6875 L 161.28125 212.0625 L 252.53125 160.101562 Z M 113.019531 188.960938 L 155.203125 212.84375 L 155.121094 261.382812 L 69.859375 213.109375 Z M 113.03125 133.402344 L 121.957031 138.457031 L 193.894531 180.105469 L 199.75 176.457031 L 160.710938 153.867188 C 159.839844 153.1875 158.890625 152.46875 157.554688 151.628906 L 124.796875 133.082031 L 121.460938 131.152344 L 121.445312 131.183594 L 119.238281 129.933594 L 158.292969 108.097656 L 196.707031 129.335938 L 196.660156 129.359375 C 196.839844 129.433594 197.011719 129.523438 197.1875 129.601562 L 202.710938 132.652344 C 202.78125 132.699219 202.851562 132.738281 202.921875 132.785156 L 202.933594 132.777344 L 246.214844 156.707031 L 157.554688 207.195312 L 69.859375 157.542969 Z M 63.835938 105.546875 L 106.847656 129.902344 L 63.753906 153.996094 Z M 155.199219 54.257812 L 155.117188 102.914062 L 113.054688 126.433594 L 69.859375 101.976562 Z M 202.890625 125.8125 L 161.191406 102.757812 L 161.273438 54.175781 L 246.214844 101.140625 Z M 209.117188 129.257812 L 258.628906 101.0625 L 158.277344 45.582031 L 57.472656 101.941406 L 57.898438 102.183594 L 57.769531 102.183594 L 57.675781 157.394531 L 57.472656 157.507812 L 106.839844 185.460938 L 57.472656 213.078125 L 157.5625 269.746094 L 258.492188 212.273438 L 258.515625 212.273438 L 258.515625 212.261719 L 258.628906 212.195312 L 258.515625 212.132812 L 258.609375 156.9375 L 258.09375 156.933594 L 258.628906 156.628906 Z"/></svg>
-      Stacked
-    </a>
+    <a class="brand" href="#">The Bitcoin Terminal</a>
+    <span class="by"><svg viewBox="0 0 317.691 315.021" aria-hidden="true"><use href="#cube"/></svg>by Stacked</span>
     <div class="nav-links">
       <a href="#sale">How it works</a>
       <a href="#custody">Custody</a>
       <a href="#hardware">Hardware</a>
+      <a href="#build">Build one</a>
       <a href="#source">Source</a>
       <a class="nav-gh" href="https://github.com/LightningPayLimited/Bitcoin-ESP32-POS-Terminal">GitHub</a>
     </div>
@@ -210,7 +226,7 @@
     <div>
       <p class="eyebrow">Open-source Lightning point of sale</p>
       <h1>Take Lightning payments. Keep the keys.</h1>
-      <p class="lede">Stacked POS is a touchscreen Bitcoin terminal for the counter.
+      <p class="lede">The Bitcoin Terminal is a touchscreen Bitcoin point of sale for the counter.
         Customers pay by QR scan or tap-to-pay card, the receipt prints itself,
         and the sats settle wherever you say — your Stacked account, your own
         BTCPay Server, or straight into your own wallet with no one in between.</p>
@@ -330,11 +346,45 @@
   </div>
 </section>
 
+<section id="build">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <p class="eyebrow">Build one</p>
+      <h2>Downloads &amp; parts</h2>
+      <p>Everything you need to put a terminal together yourself — print the
+         case, order the parts, flash the firmware.</p>
+    </div>
+    <div class="grid2">
+      <div class="card rv">
+        <h3>Downloads</h3>
+        <ul class="dl-list">
+          <li><a href="https://github.com/LightningPayLimited/Bitcoin-ESP32-POS-Terminal/raw/master/3dmodels/ESP32-NFC-v7.stl">3D-printable case (STL)</a><span> — the enclosure for the board, NFC reader and printer</span></li>
+          <li><a href="flash/">Firmware</a><span> — flashed straight from Chrome, latest build preselected</span></li>
+          <li><a href="https://github.com/LightningPayLimited/Bitcoin-ESP32-POS-Terminal">Source code</a><span> — the full firmware, MIT-licensed</span></li>
+        </ul>
+      </div>
+      <div class="card rv">
+        <h3>Parts list</h3>
+        <table class="parts">
+          <tr><td>Guition JC4880P443<span>ESP32-P4 board with the 4.3&Prime; touch display &amp; C6 Wi-Fi</span></td><td><a href="https://www.aliexpress.com/item/1005010425057615.html">AliExpress</a></td></tr>
+          <tr><td>PN532 NFC module<span>13.56&nbsp;MHz reader for tap-to-pay, wires to the board&rsquo;s CN3 connector</span></td><td><a href="https://www.aliexpress.com/item/1005001934351717.html">AliExpress</a></td></tr>
+          <tr><td>NFC connector cable<span>SH/JST-to-DuPont set, joins the PN532 to CN3</span></td><td><a href="https://www.aliexpress.com/item/1005006251847933.html">AliExpress</a></td></tr>
+          <tr><td>USB-C power cable<span>90&deg; angled, sits flush in the case</span></td><td><a href="https://www.aliexpress.com/item/1005005373218322.html">AliExpress</a></td></tr>
+          <tr><td>CSN-A2 thermal printer<span>TTL serial, 58&nbsp;mm paper &mdash; optional, for receipts</span></td><td class="pending">link soon</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="source">
   <div class="wrap os-grid">
     <div class="rv">
       <p class="eyebrow">Open source</p>
       <h2>Audit the till you run your shop on</h2>
+      <p style="margin-top:14px">The Bitcoin Terminal is built and released
+         open source by <a href="https://stackedbitcoin.com">Stacked</a> —
+         the firmware, the flasher and the enclosure all live on GitHub.</p>
       <ul class="os-list">
         <li><span class="tick">&#10003;</span><span>Full firmware source — C++ on PlatformIO, one <span style="font-family:var(--mono)">pio run</span> from clone to flashable build</span></li>
         <li><span class="tick">&#10003;</span><span>Web flasher and firmware manifest you host on your own domain — updates never depend on us</span></li>
@@ -370,11 +420,8 @@
 
 <footer>
   <div class="wrap foot-in">
-    <a class="brand" href="#">
-      <svg viewBox="0 0 317.691 315.021" aria-hidden="true"><path fill="#14AFAC" d="M 252.449219 206.972656 L 217.027344 186.488281 L 211.417969 190.273438 L 247.878906 211.335938 C 247.230469 211.820312 246.515625 212.289062 245.746094 212.542969 L 161.195312 260.6875 L 161.28125 212.0625 L 252.53125 160.101562 Z M 113.019531 188.960938 L 155.203125 212.84375 L 155.121094 261.382812 L 69.859375 213.109375 Z M 113.03125 133.402344 L 121.957031 138.457031 L 193.894531 180.105469 L 199.75 176.457031 L 160.710938 153.867188 C 159.839844 153.1875 158.890625 152.46875 157.554688 151.628906 L 124.796875 133.082031 L 121.460938 131.152344 L 121.445312 131.183594 L 119.238281 129.933594 L 158.292969 108.097656 L 196.707031 129.335938 L 196.660156 129.359375 C 196.839844 129.433594 197.011719 129.523438 197.1875 129.601562 L 202.710938 132.652344 C 202.78125 132.699219 202.851562 132.738281 202.921875 132.785156 L 202.933594 132.777344 L 246.214844 156.707031 L 157.554688 207.195312 L 69.859375 157.542969 Z M 63.835938 105.546875 L 106.847656 129.902344 L 63.753906 153.996094 Z M 155.199219 54.257812 L 155.117188 102.914062 L 113.054688 126.433594 L 69.859375 101.976562 Z M 202.890625 125.8125 L 161.191406 102.757812 L 161.273438 54.175781 L 246.214844 101.140625 Z M 209.117188 129.257812 L 258.628906 101.0625 L 158.277344 45.582031 L 57.472656 101.941406 L 57.898438 102.183594 L 57.769531 102.183594 L 57.675781 157.394531 L 57.472656 157.507812 L 106.839844 185.460938 L 57.472656 213.078125 L 157.5625 269.746094 L 258.492188 212.273438 L 258.515625 212.273438 L 258.515625 212.261719 L 258.628906 212.195312 L 258.515625 212.132812 L 258.609375 156.9375 L 258.09375 156.933594 L 258.628906 156.628906 Z"/></svg>
-      Stacked
-    </a>
-    <span>Bitcoin point of sale, in the open.</span>
+    <a class="brand" href="#">The Bitcoin Terminal</a>
+    <span class="by"><svg viewBox="0 0 317.691 315.021" aria-hidden="true"><use href="#cube"/></svg>Built &amp; released open source by <a href="https://stackedbitcoin.com">Stacked</a></span>
     <div class="foot-links">
       <a href="https://github.com/LightningPayLimited/Bitcoin-ESP32-POS-Terminal">GitHub</a>
       <a href="https://stackedbitcoin.com">stackedbitcoin.com</a>
