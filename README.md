@@ -279,7 +279,7 @@ https://your-host/
 
 Then point the devices at it: set `FW_MANIFEST_URL` in `config.h` to
 `https://your-host/firmware/manifest.json` (it ships pointing at
-`stackedbitcoin.com`) and reflash once — after that, devices update
+`thebitcointerminal.com`) and reflash once — after that, devices update
 themselves from the site via the on-device menu.
 
 To cut a release: `pio run` and type the new version at the prompt — plain

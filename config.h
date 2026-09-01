@@ -21,7 +21,7 @@
 // (versioned .bins + manifest.json). The on-device update menu (Update
 // button on the Transactions screen) fetches this manifest and installs
 // the chosen build over HTTPS. TODO: point at your real hosting.
-#define FW_MANIFEST_URL "https://stackedbitcoin.com/firmware/manifest.json"
+#define FW_MANIFEST_URL "https://thebitcointerminal.com/firmware/manifest.json"
 
 // --- NVS keys ---
 #define NVS_NAMESPACE     "stacked"
