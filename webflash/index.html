@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  Lightning Pay POS — public web flasher.
+  Stacked Bitcoin POS — public web flasher.
 
   Deploy this page and the repo's firmware/ folder (versioned .bins +
   manifest.json, maintained by fw_version.py) side by side on any static
@@ -8,8 +8,8 @@
 
       /index.html            <- this file
       /firmware/manifest.json
-      /firmware/lightningpay-pos_v1.0.0_2026-07-08_ceb7bdf.bin
-      /firmware/lightningpay-pos_v1.0.0_2026-07-08_ceb7bdf_factory.bin
+      /firmware/stackedbitcoin-pos_v1.0.0_2026-07-08_ceb7bdf.bin
+      /firmware/stackedbitcoin-pos_v1.0.0_2026-07-08_ceb7bdf_factory.bin
 
   The page lists every build from the manifest and flashes the chosen one
   to a POS plugged in over USB, using Web Serial + esptool-js. HTTPS (or
@@ -23,14 +23,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Lightning Pay POS — Firmware Flasher</title>
+<title>Stacked Bitcoin POS — Firmware Flasher</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, sans-serif; background: #111; color: #fff;
          display: flex; justify-content: center; padding: 20px; }
   .card { background: #1a1a1a; border-radius: 16px; padding: 32px;
           max-width: 520px; width: 100%; }
-  h1 { color: #f7931a; font-size: 24px; margin-bottom: 4px; }
+  h1 { color: #14afac; font-size: 24px; margin-bottom: 4px; }
   .sub { color: #888; font-size: 14px; margin-bottom: 20px; }
   h2 { color: #ccc; font-size: 14px; font-weight: 600; margin: 20px 0 8px; }
   .hint { color: #666; font-size: 12px; margin-top: 6px; }
@@ -39,21 +39,21 @@
   .file { display: block; background: #222; border: 1px solid #333; border-radius: 8px;
           padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
   .file:hover { border-color: #555; }
-  .file.sel { border-color: #f7931a; }
-  .file input, .mode input { margin-right: 8px; accent-color: #f7931a; }
+  .file.sel { border-color: #14afac; }
+  .file input, .mode input { margin-right: 8px; accent-color: #14afac; }
   .fname { font-size: 14px; word-break: break-all; }
   .latest { color: #0c0; font-style: normal; font-size: 11px; font-weight: 700;
             border: 1px solid #0c0; border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
   .fmeta { display: block; color: #777; font-size: 12px; margin: 4px 0 0 24px; }
   .mode { display: block; color: #ccc; font-size: 14px; padding: 6px 0; cursor: pointer; }
   .flash { width: 100%; padding: 14px; border-radius: 8px; border: none;
-           background: #f7931a; color: #000; font-size: 18px; font-weight: 700;
+           background: #14afac; color: #000; font-size: 18px; font-weight: 700;
            cursor: pointer; margin-top: 16px; }
-  .flash:hover:enabled { background: #d97e00; }
+  .flash:hover:enabled { background: #0e918e; }
   .flash:disabled { background: #444; color: #888; cursor: default; }
   .barwrap { margin-top: 16px; height: 22px; background: #222; border: 1px solid #333;
              border-radius: 8px; overflow: hidden; }
-  #bar { height: 100%; width: 0; background: #f7931a; transition: width .2s; }
+  #bar { height: 100%; width: 0; background: #14afac; transition: width .2s; }
   #status { margin-top: 12px; font-size: 14px; color: #aaa; min-height: 20px; }
   #status.err { color: #f55; }
   #status.ok { color: #0c0; }
@@ -65,7 +65,7 @@
 <body>
 <div class="card">
   <h1>&#9889; POS Firmware Flasher</h1>
-  <p class="sub">Plug the Lightning Pay POS terminal into this computer with a USB cable,
+  <p class="sub" id="sub">Plug the Stacked Bitcoin POS terminal into this computer with a USB cable,
      pick a firmware build, and flash.</p>
 
   <p id="unsupported" class="hint warn hidden">
@@ -90,9 +90,14 @@
 </div>
 
 <script type="module">
-import { ESPLoader, Transport } from "https://unpkg.com/esptool-js@0.5.4/bundle.js";
+import { ESPLoader, Transport } from "https://cdn.jsdelivr.net/npm/esptool-js@0.5.4/bundle.js";
 
-const FIRMWARE_DIR = "./firmware/";   // manifest.json + .bins live here
+// manifest.json + .bins live here. "./firmware/" is the deployed layout
+// (page + firmware/ side by side); "../firmware/" makes the page work
+// straight out of the repo (index.html in webflash/, firmware/ at the root)
+// with e.g. `python3 -m http.server` run from the repo root.
+const FIRMWARE_DIRS = ["./firmware/", "../firmware/"];
+let FIRMWARE_DIR = FIRMWARE_DIRS[0];
 
 const listEl   = document.getElementById("list");
 const flashBtn = document.getElementById("flashBtn");
@@ -118,10 +123,33 @@ if (!("serial" in navigator)) {
   flashBtn.disabled = true;
 }
 
-fetch(FIRMWARE_DIR + "manifest.json", {cache: "no-store"})
-  .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-  .then(m => { builds = m.builds || []; render(); })
-  .catch(e => { listEl.innerHTML = '<p class="hint warn">Could not load manifest.json (' + esc(String(e.message||e)) + ')</p>'; });
+async function loadManifest() {
+  if (location.protocol === "file:") {
+    listEl.innerHTML = '<p class="hint warn">This page can\'t fetch firmware from a file:// URL. ' +
+      'Serve it over HTTP instead — e.g. run <code>python3 -m http.server</code> in the repo root, ' +
+      'then open <code>http://localhost:8000/webflash/</code>.</p>';
+    return;
+  }
+  let lastErr = "not found";
+  for (const dir of FIRMWARE_DIRS) {
+    try {
+      const r = await fetch(dir + "manifest.json", {cache: "no-store"});
+      if (!r.ok) { lastErr = "HTTP " + r.status; continue; }
+      const m = await r.json();
+      FIRMWARE_DIR = dir;   // .bin downloads come from wherever the manifest was
+      builds = m.builds || [];
+      if (m.name)   // identify the product from the manifest; keep static text otherwise
+        document.getElementById("sub").textContent =
+          m.name + (m.chip ? " · " + m.chip : "") +
+          " — plug the terminal into this computer with a USB cable, pick a firmware build, and flash.";
+      render();
+      return;
+    } catch (e) { lastErr = String(e.message || e); }
+  }
+  listEl.innerHTML = '<p class="hint warn">Could not load manifest.json (' + esc(lastErr) + '). ' +
+    'The page expects the firmware/ folder next to it (or one level up).</p>';
+}
+loadManifest();
 
 function render() {
   if (!builds.length) {
@@ -134,8 +162,9 @@ function render() {
     '<span class="fname">v' + esc(b.version) + ' @' + esc(b.commit) +
       (i === 0 ? '<em class="latest">LATEST</em>' : '') + '</span>' +
     '<span class="fmeta">' + esc(b.date) +
-      (b.app ? ' &middot; ' + fmtSize(b.app.size) : '') +
-      (b.factory ? '' : ' &middot; no factory image') + '</span>' +
+      (b.app ? ' &middot; app ' + fmtSize(b.app.size) : '') +
+      (b.factory ? ' &middot; factory ' + fmtSize(b.factory.size)
+                 : ' &middot; no factory image') + '</span>' +
     '</label>').join("");
   listEl.querySelectorAll("input[name=fw]").forEach(r => r.addEventListener("change", () => {
     listEl.querySelectorAll(".file").forEach(el => el.classList.remove("sel"));
@@ -159,7 +188,17 @@ function syncModes() {
 }
 
 function setBar(frac) { bar.style.width = Math.round(frac * 100) + "%"; }
-function fail(msg) { st.className = "err"; st.textContent = "❌ " + msg; flashBtn.disabled = false; }
+function fail(msg) { st.className = "err"; st.textContent = "❌ " + msg; }
+
+// Lock the build/mode pickers while a flash is in progress.
+function setPickersDisabled(dis) {
+  document.querySelectorAll("input[name=fw], input[name=mode]").forEach(el => el.disabled = dis);
+}
+
+async function sha256hex(bytes) {
+  const d = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
 
 const espTerm = { clean() {}, writeLine(l) { log(l); }, write(d) {} };
 
@@ -175,6 +214,7 @@ flashBtn.addEventListener("click", async () => {
     return;
 
   flashBtn.disabled = true;
+  setPickersDisabled(true);
   barwrap.classList.remove("hidden");
   setBar(0);
   st.className = "";
@@ -185,12 +225,28 @@ flashBtn.addEventListener("click", async () => {
     const resp = await fetch(FIRMWARE_DIR + entry.file, {cache: "no-store"});
     if (!resp.ok) throw new Error("Firmware download failed: HTTP " + resp.status);
     const buf = new Uint8Array(await resp.arrayBuffer());
-    // esptool-js wants latin1 binary strings
-    const binstr = new TextDecoder("latin1").decode(buf);
+
+    // Verify the download against the manifest checksum before touching
+    // the chip (older manifests without sha256 skip the check).
+    if (entry.sha256) {
+      st.textContent = "Verifying download…";
+      const got = await sha256hex(buf);
+      if (got !== entry.sha256.toLowerCase())
+        throw new Error("SHA-256 mismatch for " + entry.file +
+                        " — corrupt download or stale manifest, not flashing");
+      log("SHA-256 verified: " + got);
+    }
+
+    // esptool-js wants binary strings, one char per byte. NOT
+    // TextDecoder("latin1") — that label is windows-1252, which remaps 27
+    // byte values in 0x80-0x9F and silently corrupts the image.
+    let binstr = "";
+    for (let i = 0; i < buf.length; i += 0x8000)
+      binstr += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
 
     st.textContent = "Select the POS serial port…";
     const device = await navigator.serial.requestPort();
-    transport = new Transport(device, true);
+    transport = new Transport(device, false);  // no tracing — hex dumps drown the console
     // 115200 throughout — this board's USB-Serial/JTAG wedges on baud
     // changes (see platformio.ini).
     const loader = new ESPLoader({ transport, baudrate: 115200, romBaudrate: 115200,
@@ -224,7 +280,8 @@ flashBtn.addEventListener("click", async () => {
       },
     });
 
-    try { await loader.hardReset(); } catch (e) { /* some boards need manual reset */ }
+    // after("hard_reset") is 0.5.4's reset API (there is no loader.hardReset()).
+    try { await loader.after("hard_reset"); } catch (e) { /* some boards need manual reset */ }
     setBar(1);
     st.className = "ok";
     st.textContent = "✅ Flashed v" + b.version + " @" + b.commit +
@@ -233,6 +290,8 @@ flashBtn.addEventListener("click", async () => {
     fail(String(e.message || e));
   } finally {
     if (transport) { try { await transport.disconnect(); } catch (e) {} }
+    setPickersDisabled(false);
+    syncModes();   // restore the factory radio's per-build availability
     flashBtn.disabled = false;
   }
 });
